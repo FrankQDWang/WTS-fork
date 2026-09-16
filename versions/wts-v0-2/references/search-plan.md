@@ -5,7 +5,7 @@
 搜索计划轮次允许 1-3。第一轮必须直接创建 `iteration-1.json`，后续轮次依次使用 `iteration-2.json`、`iteration-3.json`。第 N 轮计划的唯一合法路径是：
 
 ```text
-<TASK_WORK_DIR>/wts/search-plans/iteration-N.json
+<TASK_WORK_DIR>/wts-v0-2/search-plans/iteration-N.json
 ```
 
 `iteration-0` 只用于 preflight。同一轮修正时原地覆盖同一个 `iteration-N.json`。Builder 会同时校验任务工作目录、1-3 轮次和文件名，不符合即拒绝编译。
@@ -75,7 +75,7 @@ Builder 把每份详情的 15 秒预算分配到读取列表位置、点击打�
 
 ## 探测计划
 
-公司词探测（SKILL.md 步骤 6.5）只在第 1 轮前做一次，计划文件固定为 `<TASK_WORK_DIR>/wts/search-plans/probe-1.json`，编译命令的 `workflow_type` 为 `probe`、`--iteration 1`；Builder 拒绝其他轮次。字段：
+公司词探测（SKILL.md 步骤 6.5）只在第 1 轮前做一次，计划文件固定为 `<TASK_WORK_DIR>/wts-v0-2/search-plans/probe-1.json`，编译命令的 `workflow_type` 为 `probe`、`--iteration 1`；Builder 拒绝其他轮次。字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |

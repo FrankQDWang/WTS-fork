@@ -15,8 +15,8 @@ from typing import Any
 from pacing import pace_preflight, pace_search_path
 
 
-SKILL_NAME = "wts"
-SKILL_VERSION = "0.5.2"
+SKILL_NAME = "wts-v0-2"
+SKILL_VERSION = "0.2"
 WORKFLOW_SCHEMA = "browser.workflow.v1"
 SCHEMA_VERSION = 2
 MAX_SEARCH_ITERATION = 3

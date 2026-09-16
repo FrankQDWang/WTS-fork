@@ -1,3 +1,6 @@
 # WTS 0.2 changelog
 
-No Skill behavior has been published yet. This commit creates the version-package skeleton only.
+- 在 0.1 基础上，为点击、输入、按键、内容读取和导航后的间隙加入分散延迟；原有 Skill 执行流程保持不变。
+- 普通操作按 action_delay_ms 基准浮动 ±20%；每份详情的三个常规操作各约 4–6 秒，合计 15 秒。
+- 延迟在编译工作流时生成，不同候选人分别分配。页面检测、加载轮询和取消响应保持原行为。
+- 使用独立身份 wts-v0-2 / 0.2；0.1 不变，0.3 保留占位。
