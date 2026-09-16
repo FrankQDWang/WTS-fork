@@ -1,0 +1,149 @@
+{
+  "runtime_hashes": {
+    "runner": "68d4277361fb98f4a1578b7e78e50cf85d0a1f605f8365e62525921f03eab163",
+    "host": "64d43204d2b512576e205c03d6ed3d50c2d4408da3da42d6f7447305a387b3c0",
+    "content": "d52f2982b17b574674fee2b75febb03f4d547e3b3869cd1ce38bffed6598c823"
+  },
+  "checks": [
+    {
+      "name": "distributed_atomic_waits",
+      "opened": [
+        {
+          "at_ms": 10420.450208,
+          "at": "2026-09-16T08:00:38.092Z"
+        },
+        {
+          "at_ms": 25118.478208,
+          "at": "2026-09-16T08:00:52.790Z"
+        },
+        {
+          "at_ms": 40118.388957999996,
+          "at": "2026-09-16T08:01:07.790Z"
+        }
+      ],
+      "intervals_ms": [
+        10420.450208,
+        14698.028,
+        14999.910749999995
+      ],
+      "waits": [
+        {
+          "id": "pacing-before-primary-read-current-search-page-0",
+          "planned_ms": 5327,
+          "elapsed_ms": 5328.761708999999
+        },
+        {
+          "id": "pacing-before-primary-collect-candidate-details-open-0",
+          "planned_ms": 5086,
+          "elapsed_ms": 5086.489290999999
+        },
+        {
+          "id": "pacing-before-primary-extract-detail-0",
+          "planned_ms": 4587,
+          "elapsed_ms": 4587.844000000001
+        },
+        {
+          "id": "pacing-before-primary-read-current-search-page-1",
+          "planned_ms": 5216,
+          "elapsed_ms": 5216.4532500000005
+        },
+        {
+          "id": "pacing-before-primary-collect-candidate-details-open-1",
+          "planned_ms": 4882,
+          "elapsed_ms": 4883.560458
+        },
+        {
+          "id": "pacing-before-primary-extract-detail-1",
+          "planned_ms": 4902,
+          "elapsed_ms": 4902.854458999998
+        },
+        {
+          "id": "pacing-before-secondary-read-current-search-page-0",
+          "planned_ms": 5206,
+          "elapsed_ms": 5206.499165999998
+        },
+        {
+          "id": "pacing-before-secondary-collect-candidate-details-open-0",
+          "planned_ms": 4885,
+          "elapsed_ms": 4886.180249999998
+        },
+        {
+          "id": "pacing-before-secondary-extract-detail-0",
+          "planned_ms": 4909,
+          "elapsed_ms": 4909.357791999995
+        }
+      ],
+      "operations": [
+        {
+          "id": "primary-read-current-search-page",
+          "at": "2026-09-16T08:00:33.005Z"
+        },
+        {
+          "id": "primary-collect-candidate-details-open",
+          "at": "2026-09-16T08:00:38.092Z"
+        },
+        {
+          "id": "primary-extract-detail",
+          "at": "2026-09-16T08:00:42.685Z"
+        },
+        {
+          "id": "primary-read-current-search-page",
+          "at": "2026-09-16T08:00:47.906Z"
+        },
+        {
+          "id": "primary-collect-candidate-details-open",
+          "at": "2026-09-16T08:00:52.790Z"
+        },
+        {
+          "id": "primary-extract-detail",
+          "at": "2026-09-16T08:00:57.694Z"
+        },
+        {
+          "id": "secondary-read-current-search-page",
+          "at": "2026-09-16T08:01:02.904Z"
+        },
+        {
+          "id": "secondary-collect-candidate-details-open",
+          "at": "2026-09-16T08:01:07.790Z"
+        },
+        {
+          "id": "secondary-extract-detail",
+          "at": "2026-09-16T08:01:12.701Z"
+        }
+      ]
+    },
+    {
+      "name": "cancel_during_wait",
+      "clicks": 0,
+      "elapsed_ms": 205.28383300000132
+    },
+    {
+      "name": "captcha_detected",
+      "code": "SECURITY_VERIFICATION_REQUIRED"
+    },
+    {
+      "name": "captcha_present_waits_without_reexecute",
+      "detailExecutions": 1
+    }
+  ],
+  "blockers": [
+    {
+      "name": "captcha_clear_auto_resumes",
+      "executions": 2,
+      "resumes": 1,
+      "explanation": "No explicit user continue event was supplied; installed runner resumed anyway."
+    },
+    {
+      "name": "completed_details_missing_from_terminal_result",
+      "completed_in_runtime_context": 3,
+      "explanation": "Terminal human-required payload does not expose details already collected in the workflow context; resumable result retention is not satisfied at this boundary."
+    }
+  ],
+  "budgets": {
+    "builder_default_minutes": 20,
+    "detail_wait_budget_ms": 120000,
+    "popup_capture_ms": 80812,
+    "host_max_workflow_ms": 1800000
+  },
+  "status": "BLOCKED_RUNTIME"
+}

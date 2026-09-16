@@ -9,6 +9,8 @@ description: 猎聘寻访。用户给出 JD 或招聘需求要做需求澄清，
 
 浏览器由 `scripts/build_workflow.py` 编译出的工作流驱动，Agent 只接触 workflow_ref 和 result_ref；**网络搜索工具**只在步骤 3.5 调研目标公司时使用。
 
+本版是浏览器操作分散延迟实验。首次执行浏览器工作流前，读取 `references/detail-pacing-experiment.md`，确认当前宿主已通过运行器验收；未通过时只生成计划和工作流，向用户说明阻塞。
+
 ## 与用户交互
 
 ### 提问
@@ -131,7 +133,7 @@ request_user_input 是**独占调用**：它所在的这一轮里没有别的工
 python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" preflight --task-id TASK_ID --iteration 0 --task-work-dir "/ABSOLUTE/TASK_WORK_DIR"
 ```
 
-把返回的 workflow_ref 传给 browser_run_workflow(task_id, workflow_ref)。登录、验证码和风控识别已编译进工作流；命中后浏览器显示窗口等待用户处理，按异常格式播报需要用户做什么，等用户处理完再继续。
+把返回的 workflow_ref 传给 browser_run_workflow(task_id, workflow_ref)。登录、验证码和风控识别已编译进工作流；命中后按异常格式播报需要用户做什么。验证码和风控按下方决策规则暂停。
 
 **播报**（前置就绪后）：有待探测的调研公司时"猎聘已登录，先看看这几家目标公司在猎聘上有多少合适的人。"；否则"猎聘已登录，开始第 1 轮检索。"
 
@@ -177,6 +179,8 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 **播报**（执行前，必须预告）：本轮用哪几组关键词、预计几分钟、期间不会有新消息。例："第 2 轮开始，这轮用「AI Agent + LangGraph」和「AI Agent + RAG」两组词检索，预计 3–5 分钟，期间不会有新消息。"
 
 然后调用一次 browser_run_workflow(task_id, workflow_ref)。整轮的搜索、筛选、抽卡、硬筛和详情采集都在这一次调用里由工作流完成。
+
+Builder 已把延迟分散到点击、输入、跳转后的间隙和内容读取之前，并注入轻微随机变化；每份详情的三个常规操作合计等待 15 秒，另有普通操作的小幅等待。预计耗时计入这些等待。直接执行编译结果，保持搜索、评分和详情预算，具体实验记录见 `references/detail-pacing-experiment.md`。
 
 ### 10. 读取结果
 
@@ -242,6 +246,7 @@ Controller 是停止与下一轮关键词的最终决策者，按下列优先级
 - 只有 JD 明确要求且渠道数据能够验证的条件才进入 hard_filters。语义匹配、潜力和偏好留给评分。
 - 年龄、性别、学校名称、民族、婚育不参与检索、站内筛选、评分、排序、硬冲突判定或市场洞察归纳。用户提出此类要求时说明不予执行，其余条件照常处理。
 - 零结果是有效的查询结果，进入正常的评分、反思和 Controller 决策；工具错误、超时或页面失败是失败，不记作零结果。
+- 验证码或风控出现时，结束本次实验记录并暂停任务，保留已完成结果；不自动重试、不进入下一轮。用户处理并明确要求继续后，先核对已完成进度，再从未完成处恢复并保留逐份等待。宿主若会自行恢复、丢失进度或继续打开详情，记为运行器阻塞，不重跑整轮代替恢复。
 - 站内筛选降级（partial、unsupported_filters 非空）只是召回范围没缩小，同字段硬条件仍由工作流的卡片和详情硬筛执行；本轮照常评分，无需重跑。
 - 未被容错块捕获的 TARGET_NOT_FOUND、WAIT_TIMEOUT、PAGE_STATE_NOT_RECOGNIZED，或工作流引用失效，都结束当前轮；只有调整搜索计划、更新 Skill 页面规则或恢复明确的人工作业状态后，才重新编译执行。
 - 有外部副作用的动作出现网络错误、超时或效果未知时，先读取运行结果**对账**：已有明确观察则消费结果；证明未产生效果后才允许在下一轮重新编译执行；仍无法确定时暂停并说明。
