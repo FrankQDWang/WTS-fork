@@ -113,7 +113,7 @@
             <div class="station">6</div>
             <p class="owner">Agent 输出</p>
             <h3>终态报告</h3>
-            <p>Top 10、不推荐摘要、市场洞察与最多 2 个备选方向。</p>
+            <p>Top 10、未满足原因、失败项、市场洞察与最多 2 个备选方向。</p>
           </article>
         </div>
 
@@ -187,16 +187,17 @@
           <p>系统不是反复搜同一组词，而是用当前结果决定下一轮。</p>
         </div>
 
-        <div class="loop-diagram" aria-label="七步检索循环">
+        <div class="loop-diagram" aria-label="八步检索循环">
           <div class="loop-core"><span>最多</span><strong>3</strong><span>轮</span></div>
           <ol>
             <li style="--i: 0"><b>01</b><span>SearchPlan</span><small>决定两路查询</small></li>
-            <li style="--i: 1"><b>02</b><span>搜索</span><small>执行关键词与站内筛选</small></li>
-            <li style="--i: 2"><b>03</b><span>硬筛</span><small>卡片预筛 + 详情终筛</small></li>
-            <li style="--i: 3"><b>04</b><span>详情</span><small>只打开有希望的人</small></li>
-            <li style="--i: 4"><b>05</b><span>隔离评分</span><small>每人只看需求与本人证据</small></li>
-            <li style="--i: 5"><b>06</b><span>反思</span><small>看召回、新人和噪音</small></li>
-            <li style="--i: 6"><b>07</b><span>Controller</span><small>拍板继续、调整或停止</small></li>
+            <li style="--i: 1"><b>02</b><span>搜索与抽卡</span><small>关键词、站内筛选、首屏卡片</small></li>
+            <li style="--i: 2"><b>03</b><span>卡片预筛</span><small>先用卡片已知字段淘汰硬冲突</small></li>
+            <li style="--i: 3"><b>04</b><span>详情采集</span><small>只打开匹配和未知的人</small></li>
+            <li style="--i: 4"><b>05</b><span>详情终筛</span><small>用完整经历再做一次硬筛</small></li>
+            <li style="--i: 5"><b>06</b><span>隔离评分</span><small>每人只看需求与本人证据</small></li>
+            <li style="--i: 6"><b>07</b><span>反思</span><small>看召回、新人和噪音</small></li>
+            <li style="--i: 7"><b>08</b><span>Controller</span><small>拍板继续、调整或停止</small></li>
           </ol>
         </div>
       </section>
@@ -207,9 +208,9 @@
           <h2 id="decision-title">不为“多搜一轮”而多搜一轮</h2>
         </div>
         <div class="decision-grid">
-          <article class="go"><span>继续</span><h3>还有可验证的新方向</h3><p>上轮带来新候选人，或有 PRF 待试词、未试词族、可用公司词。</p></article>
-          <article class="stop"><span>停止</span><h3>强池已形成</h3><p>Top 10 已满，且至少 5 位强匹配，继续搜索的边际价值已很低。</p></article>
-          <article class="stop"><span>停止</span><h3>轮次或新增用完</h3><p>完成 3 轮，或已有 2 轮但本轮没有新候选人。</p></article>
+          <article class="go"><span>继续</span><h3>质量不足，但还有词可试</h3><p>强匹配不足 3 人且有未试词族时继续；没有时也要先放宽一次，再允许低质量停止。</p></article>
+          <article class="stop"><span>可停</span><h3>质量门已达成</h3><p>强匹配至少 3 人或已成强池；若有新人的轮次不足 2 轮且仍有未试词族，则继续。</p></article>
+          <article class="stop"><span>硬停</span><h3>轮次或查询已用完</h3><p>达到最大轮次时硬停；活跃词、备用词、待试词和纯锚点都用尽时，以“词族耗尽”停止。</p></article>
           <article class="pause"><span>暂停</span><h3>结果无法可靠对账</h3><p>未证明执行、效果未知、详情全部失败或出现致命错误。</p></article>
         </div>
       </section>
@@ -224,9 +225,9 @@
           <div class="deliverables">
             <article><span>01</span><h3>候选人画像</h3><p>用户已确认的寻访标准</p></article>
             <article><span>02</span><h3>Top 10 榜单</h3><p>证据、分数、风险和结论</p></article>
-            <article><span>03</span><h3>不推荐摘要</h3><p>掉队人数与共性原因</p></article>
+            <article><span>03</span><h3>未满足原因</h3><p>还差几位、耗尽词族与无法验证的硬条件</p></article>
             <article><span>04</span><h3>市场洞察</h3><p>召回规模、满足度、公司分布、缺口</p></article>
-            <article><span>05</span><h3>备选方向</h3><p>最多 2 个，用户选择后重开新主池</p></article>
+            <article><span>05</span><h3>失败项与备选方向</h3><p>未看到详情的原因，以及最多 2 个可重开的方向</p></article>
           </div>
         </div>
       </section>

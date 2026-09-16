@@ -6,8 +6,8 @@
   --surface: #ffffff;
   --line: #ccd7df;
   --agent: #2667ff;
-  --user: #ff914d;
-  --browser: #13a38e;
+  --user: #9b3f00;
+  --browser: #006b60;
   --pause: #c64f63;
   --lime: #cce95f;
   --shadow: 0 20px 60px rgba(16, 33, 58, 0.08);
@@ -388,7 +388,7 @@ a { color: inherit; }
 .loop-core strong { margin-block: -14px; font-size: 5rem; line-height: 1; }
 .loop-diagram ol { position: absolute; inset: 0; margin: 0; padding: 0; list-style: none; }
 .loop-diagram li {
-  --angle: calc(var(--i) * 51.43deg - 90deg);
+  --angle: calc(var(--i) * 45deg - 90deg);
   position: absolute;
   top: 50%;
   left: 50%;

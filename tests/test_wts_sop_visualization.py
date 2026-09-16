@@ -66,6 +66,33 @@ class WtsSopVisualizationTest(unittest.TestCase):
         config = json.loads(self.read_required(SITE / ".openai" / "hosting.json"))
         self.assertEqual(config["static"]["directory"], "dist")
 
+    def test_final_outputs_match_the_frozen_contract(self):
+        html = self.read_required(DIST / "index.html")
+        self.assertIn("未满足原因", html)
+        self.assertIn("失败项", html)
+        self.assertNotIn("不推荐摘要", html)
+
+    def test_retrieval_order_matches_the_browser_workflow(self):
+        html = self.read_required(DIST / "index.html")
+        loop = html[html.index('class="loop-diagram"'):html.index('</section>', html.index('class="loop-diagram"'))]
+        expected_order = ("搜索与抽卡", "卡片预筛", "详情采集", "详情终筛", "隔离评分")
+        for label in expected_order:
+            self.assertIn(label, loop)
+        positions = [loop.index(label) for label in expected_order]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_stop_copy_preserves_controller_priority(self):
+        html = self.read_required(DIST / "index.html")
+        self.assertIn("达到最大轮次", html)
+        self.assertIn("词族耗尽", html)
+        self.assertIn("先放宽一次", html)
+        self.assertNotIn("已有 2 轮但本轮没有新候选人", html)
+
+    def test_role_colors_use_high_contrast_values(self):
+        css = self.read_required(DIST / "styles.css")
+        self.assertIn("--user: #9b3f00", css.lower())
+        self.assertIn("--browser: #006b60", css.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
