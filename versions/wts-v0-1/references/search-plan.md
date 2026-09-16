@@ -1,0 +1,151 @@
+# 搜索计划契约
+
+仅在生成或调整猎聘搜索计划时读取本文件。计划文件是 Agent 与 Skill Builder 之间的领域输入，不是浏览器命令。Builder 会拒绝未知字段，并把计划与 Skill 内的渠道资产编译为 `browser.workflow.v1`。
+
+搜索计划轮次允许 1-3。第一轮必须直接创建 `iteration-1.json`，后续轮次依次使用 `iteration-2.json`、`iteration-3.json`。第 N 轮计划的唯一合法路径是：
+
+```text
+<TASK_WORK_DIR>/wts-v0-1/search-plans/iteration-N.json
+```
+
+`iteration-0` 只用于 preflight。同一轮修正时原地覆盖同一个 `iteration-N.json`。Builder 会同时校验任务工作目录、1-3 轮次和文件名，不符合即拒绝编译。
+
+第 1 轮只能有主路径。第 2 轮起可以增加第二路；两路查询不能相同。一次编译会把本轮两路连续写进同一份工作流。
+
+## 字段
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `primary_query` | string | 必填，1-50 字符；主路径自然语言查询，不使用 `OR`、`AND`、`NOT`。可含 1 个公司词（SKILL.md 步骤 3.5） |
+| `secondary_query` | string | 可选；第二路自然语言查询，只含锚点和支持词。第 1 轮禁止出现 |
+| `site_filters` | object | 猎聘页面可直接设置的筛选条件 |
+| `hard_filters` | object | Builder 将其编译为通用 `data.filter` 谓词；先做卡片预筛，再做详情终筛 |
+| `semantic_criteria` | object | 给隔离评分用，不编译进页面动作 |
+| `limits.max_cards_per_path` | integer | 1-30，默认 30；每路首屏最多抽取的卡片数 |
+| `limits.primary_max_details` | integer | 0-5，默认 5 |
+| `limits.secondary_max_details` | integer | 0-3，默认 3；没有第二路时视为 0 |
+| `action_delay_ms` | integer | 800-5000，默认 1200；注入页面操作程序，不由 Agent 逐步等待 |
+
+每路固定只采首屏。
+
+`semantic_criteria` 只接受：
+
+- `must_have`：必须满足，最多 20 条
+- `nice_to_have`：加分项，最多 20 条
+- `exclude_signals`：排除信号，最多 20 条
+
+## 站内筛选字段
+
+`site_filters` 支持：
+
+- `current_cities`、`expected_cities`: 最多 9 个城市名称或标准编码。
+- `experience_years`: 仅支持 `{min:0,max:0}`、`{min:1,max:3}`、`{min:3,max:5}`、`{min:5,max:10}`、`{min:10,max:null}`。
+- `education`: 最多一个值，支持本科、硕士、博士/博士后、大专、中专/中技、高中及以下。
+- `school_requirements`: 最多一个值，支持 `211`、`985`、`double_first_class`、`overseas`。
+
+策略允许写入但页面没有控件的字段：
+
+- `company`、`work_content`: 写入 `site_filters` 时 Builder 会记 `SITE_FILTER_UNSUPPORTED` 并跳过页面筛选；请同时写入 `hard_filters` 做文本硬筛。
+
+不要写入 `age_range`、`activity_recency`、`job_hop_frequency`。年龄、活跃度、跳槽频率不参与检索或硬筛。
+
+站内筛选只能使用猎聘支持的离散预设。Selector、控件定位、弹窗交互和取值标签由 Skill 渠道资产维护，计划中不得出现 Selector 或点击步骤。不要为了表达 `0-3 年` 等精确范围而选近似预设；把精确条件保留在 `hard_filters`。若站内工作年限不是受支持的预设，Builder 只会在 `hard_filters` 存在完全相同范围时移除该站内条件并返回 warning，否则拒绝计划。
+
+所有站内筛选都采用“失败后继续并上报”：某个字段的页面操作失败时跳过该字段、继续关键词搜索，并把字段、请求值和错误原因写入对应路径的 `search.<path>.unsupported_filters`。站内筛选只是缩小召回范围；同字段若属于硬条件，仍由后续卡片和详情 `data.filter` 执行。
+
+## 硬性过滤字段
+
+`hard_filters` 支持：
+
+- `current_cities`、`expected_cities`、`education`: 字符串数组。
+- `experience_years`: `{min,max}`。
+- `school_requirements`: 字符串数组，支持 `211`、`985`、`double_first_class`、`overseas`；数组内按“满足任一项”判断。
+- `company`、`work_content`: 字符串数组；卡片阶段缺失或未命中记 unknown，详情阶段未命中记不符合。
+- `required_keywords.all`: 必须全部命中的关键词数组。
+- `required_keywords.any`: 至少命中一个的关键词数组。
+- `required_keyword_groups`: 二维字符串数组。组与组之间是 AND，每组内部是 OR。
+
+编译后的顺序固定为：对每一路执行关键词搜索并应用站内筛选，抽取该路首屏最多 30 张卡片，使用卡片已知字段做硬性预筛，只为 `matched` 和 `unknown` 候选人按该路详情预算采集详情，再使用详情字段做硬性终筛。第 2 轮起若有第二路，同一份工作流会接着跑完第二路。所有步骤由一次 `browser_run_workflow` 在模型外连续执行。
+
+卡片上能够明确读到的城市、学历、工作年限等字段可以直接淘汰不符合者。列表摘要没有出现关键词、院校标签或其他可能被页面折叠的信息时只记为 `unknown`，不得提前淘汰。Builder 为卡片和详情分别生成声明式谓词；通用浏览器不理解招聘字段。
+
+用户或 JD 明确声明为硬性的站内条件必须同步写入 `hard_filters`。不要假设站内筛选等同于最终硬筛。
+
+## 探测计划
+
+公司词探测（SKILL.md 步骤 6.5）只在第 1 轮前做一次，计划文件固定为 `<TASK_WORK_DIR>/wts-v0-1/search-plans/probe-1.json`，编译命令的 `workflow_type` 为 `probe`、`--iteration 1`；Builder 拒绝其他轮次。字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `anchor` | string | 必填，主锚点 |
+| `companies` | string[] | 必填，1-3 家、不重复；每家编译为一条查询 `"<anchor> <公司名>"`，合计 ≤ 50 字符 |
+| `site_filters` | object | 与搜索计划相同，取自硬性筛选条件 |
+| `action_delay_ms` | integer | 同搜索计划 |
+
+没有 `hard_filters`、`semantic_criteria`、`limits`：探测只搜索并抽取首屏卡片（每家最多 30 张），不做硬筛、不采详情。
+
+结果：`summary.workflow` 为 `company_probe`；`summary.paths.company_K` 每家一项 `{company, query, card_count, unsupported_filter_count}`；`search.company_K` 含 `unsupported_filters` 与 `pages`。`summary.recall_threshold` 为 10：`card_count` > 10 可用，≤ 10 不可用。
+
+```json
+{
+  "anchor": "AI Agent",
+  "companies": ["阿里巴巴", "字节跳动"],
+  "site_filters": {"expected_cities": ["上海"], "education": ["本科"]}
+}
+```
+
+## 结果分区
+
+工作流按路径落盘，不要把两路结果混成一个无标记列表：
+
+- `summary.paths.primary` / `summary.paths.secondary`
+- `search.primary` / `search.secondary`
+- `candidates.primary` / `candidates.secondary`
+- `details.primary` / `details.secondary`
+- `failures.primary` / `failures.secondary`
+
+卡片和详情会带 `search_path=primary|secondary`。没有第二路时，不要读 `secondary` 分区。
+
+## 示例
+
+第 1 轮只有主路径（主锚点 + 2 支持词 + 公司词）：
+
+```json
+{
+  "primary_query": "AI Agent LangGraph RAG 阿里巴巴",
+  "site_filters": {
+    "expected_cities": ["上海"],
+    "education": ["本科"]
+  },
+  "hard_filters": {
+    "expected_cities": ["上海"],
+    "education": ["本科"],
+    "required_keyword_groups": [["AI Agent"], ["LangGraph", "LangChain"]]
+  },
+  "semantic_criteria": {
+    "must_have": ["有大模型应用或 Agent 落地经历"],
+    "nice_to_have": ["熟悉 RAG"],
+    "exclude_signals": ["纯销售岗"]
+  }
+}
+```
+
+第 2 轮主路径（第 1 轮召回少，Agent 减到 1 支持词并换公司词）+ 第二路：
+
+```json
+{
+  "primary_query": "AI Agent LangGraph 字节跳动",
+  "secondary_query": "AI Agent RAG",
+  "site_filters": {
+    "expected_cities": ["上海"]
+  },
+  "hard_filters": {
+    "expected_cities": ["上海"]
+  },
+  "semantic_criteria": {
+    "must_have": ["有大模型应用或 Agent 落地经历"],
+    "nice_to_have": ["熟悉 RAG"],
+    "exclude_signals": ["纯销售岗"]
+  }
+}
+```
