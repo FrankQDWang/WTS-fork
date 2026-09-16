@@ -7,4 +7,4 @@ description: Frozen WTS 0.3 test-package placeholder. Add approved version conte
 
 This directory is reserved for the frozen WTS 0.3 test package.
 
-Publish approved content from `source/wts/` here before testing this version.
+Publish approved content from `source/` here before testing this version.

@@ -242,4 +242,4 @@ Expected: zero credential matches and zero hidden-reasoning fields.
 
 **Step 4: Report the result without committing unrelated changes**
 
-List the two Case files, their sizes, covered phases, validation results, and any evidence gaps. Do not stage or commit the user's pre-existing `source/wts/SKILL.md` or `.DS_Store` files.
+List the two Case files, their sizes, covered phases, validation results, and any evidence gaps. Do not stage or commit unrelated changes in `source/SKILL.md` or `.DS_Store` files.
