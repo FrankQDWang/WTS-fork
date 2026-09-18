@@ -13,6 +13,13 @@
 ```text
 WTS/
 ├── README.md
+├── collaborators/                  # 两位固定合作者的独立交付区
+│   ├── guanfeng/
+│   │   ├── source/
+│   │   └── CHANGELOG.md
+│   └── qingdong/
+│       ├── source/
+│       └── CHANGELOG.md
 ├── source/                         # 正在开发的 WTS Skill
 │   ├── SKILL.md
 │   ├── agents/
@@ -29,9 +36,15 @@ WTS/
 
 ## 各目录的职责
 
+### `collaborators/`
+
+`guanfeng/` 和 `qingdong/` 是两位固定合作者的独立交付区。合作者将完整 Skill 文件放入各自的 `source/`，并在同目录的 `CHANGELOG.md` 中说明改动。两个目录的内容都不会自动进入主开发源。
+
+维护者收到可合并通知后，对比该合作者的 `source/`、`CHANGELOG.md` 与主 `source/`，只将已审核改动合入 `WTS/source/`。
+
 ### `source/`
 
-`source/` 直接是一个完整的 Skill 目录，不再增加 `wts/` 中间层。日常开发和 PR 评审在这里进行。
+`source/` 直接是一个完整的 Skill 目录，不再增加 `wts/` 中间层。它是唯一主开发源，只接收经评审的合作者改动。
 
 ### `versions/`
 
@@ -52,9 +65,9 @@ Case 采用弱约束观察：不预设具体搜索词、轮数、候选人或唯
 
 ## 如何使用
 
-### 1. 开发 Skill
+### 1. 交付和合并 Skill
 
-在 `source/` 中修改 Skill，通过 branch 和 Pull Request 进行评审。
+guanfeng 和 qingdong 将完整 Skill 和改动说明提交到各自的 `collaborators/<name>/` 目录。维护者核对 changelog 和实际 Git diff 后，将已审核改动合入 `source/`。
 
 ### 2. 发布测试版本
 
