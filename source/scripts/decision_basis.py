@@ -254,4 +254,3 @@ def decision_receipt(plan: dict, *, iteration: int, task_id: str, store_root: Pa
             ],
         })
     return receipt
-
