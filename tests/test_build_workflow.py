@@ -120,6 +120,46 @@ class BuildWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["interaction_mode"], "human")
         self.assertEqual(workflow["steps"][-1]["value"]["summary"]["workflow"], "company_probe")
 
+    def test_search_plan_accepts_requirement_version_and_decision_basis(self) -> None:
+        path = self.root / "plan.json"
+        basis = {
+            "requirement_version": "v1",
+            "completed_iteration": 0,
+            "candidate_scores": [],
+            "prf_decision": {"status": "none", "reason": "首轮尚无候选人"},
+            "next_action": {
+                "action": "search",
+                "iteration": 1,
+                "primary_query": "AI Agent",
+                "reason": "开始首轮",
+            },
+        }
+        path.write_text(
+            json.dumps(
+                {
+                    "requirement_version": "v1",
+                    "primary_query": "AI Agent",
+                    "site_filters": {},
+                    "hard_filters": {},
+                    "semantic_criteria": {
+                        "must_have": ["Agent 经验"],
+                        "nice_to_have": [],
+                        "exclude_signals": [],
+                    },
+                    "decision_basis": basis,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        plan, _ = build_workflow.read_plan(str(path))
+        self.assertEqual(plan["requirement_version"], "v1")
+        self.assertEqual(plan["decision_basis"], basis)
+        args = self.args("search", 1, json.loads(path.read_text(encoding="utf-8")))
+        workflow = build_workflow.build_search(args, self.assets)
+        self.assertEqual(workflow["input_summary"]["requirement_version"], "v1")
+        self.assertEqual(args.decision_receipt["completed_iteration"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

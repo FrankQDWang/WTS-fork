@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from pacing import pace_preflight, pace_search_path
+from decision_basis import decision_receipt
 
 
 SKILL_NAME = "wts"
@@ -99,6 +100,7 @@ ALLOWED_HARD_FILTER_KEYS = {
     "required_keyword_groups",
 }
 ALLOWED_PLAN_KEYS = {
+    "requirement_version",
     "primary_query",
     "secondary_query",
     "keyword_text",
@@ -108,6 +110,7 @@ ALLOWED_PLAN_KEYS = {
     "allow_partial_filters",
     "limits",
     "action_delay_ms",
+    "decision_basis",
 }
 ALLOWED_PROBE_PLAN_KEYS = {"anchor", "companies", "site_filters", "action_delay_ms"}
 ALLOWED_SEMANTIC_KEYS = {"must_have", "nice_to_have", "exclude_signals"}
@@ -461,6 +464,14 @@ def read_plan(plan_path: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
     unknown_keys = sorted(set(plan) - ALLOWED_PLAN_KEYS)
     if unknown_keys:
         raise ValueError(f"搜索计划包含未知字段: {', '.join(unknown_keys)}")
+    basis = plan.get("decision_basis")
+    version = plan.get(
+        "requirement_version",
+        basis.get("requirement_version", "v1") if isinstance(basis, dict) else "v1",
+    )
+    if not isinstance(version, str) or not version.strip() or len(version) > 80:
+        raise ValueError("requirement_version 必须是 1-80 字符的已确认需求版本")
+    plan["requirement_version"] = version.strip()
     if "keyword_text" in plan and "primary_query" in plan:
         if str(plan["keyword_text"]).strip() != str(plan["primary_query"]).strip():
             raise ValueError("keyword_text 与 primary_query 不一致；请只使用 primary_query")
@@ -1232,6 +1243,12 @@ def build_preflight(args: argparse.Namespace, assets: dict[str, Any]) -> dict[st
 
 def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
     plan, warnings = read_plan(args.plan_file)
+    args.decision_receipt = decision_receipt(
+        plan,
+        iteration=args.iteration,
+        task_id=args.task_id,
+        store_root=Path(args.store_root).expanduser().resolve(),
+    )
     if args.iteration == 1 and plan.get("secondary_query"):
         raise ValueError("第 1 轮不能设置 secondary_query")
     channel = assets["channel"]
@@ -1305,6 +1322,7 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
         "poll_interval_ms": channel["timing"]["poll_interval_ms"],
     }
     workflow["input_summary"] = {
+        "requirement_version": plan["requirement_version"],
         "primary_query": plan["primary_query"],
         "secondary_query": plan.get("secondary_query"),
         "site_filter_fields": sorted(site_filter_fields),
