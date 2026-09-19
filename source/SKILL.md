@@ -13,11 +13,13 @@ description: 猎聘寻访。用户给出 JD 或招聘需求要做需求澄清，
 
 ### 提问
 
-request_user_input 是**独占调用**：它所在的这一轮里没有别的工具调用。固定 skill_name=wts，step_id 见各步。宿主的字段约束：每题最多 8 个选项；label ≤ 80 字，只放选项本身，理由和差异写在 description（≤ 240 字）；prompt ≤ 300 字；用户可自行填写用 allow_custom=true 表达，推荐的填写值放 custom_placeholder。超过 300 字的正文（画像、报告）作为普通文本先输出，再发起调用，调用里的 prompt 只是一句提问。
+request_user_input 是**独占调用**：它所在的这一轮里没有别的工具调用。固定 skill_name=wts，step_id 见各步。宿主的字段约束：每题最多 8 个选项；label ≤ 80 字，只放选项本身，理由和差异写在 description（≤ 240 字）；prompt ≤ 300 字；用户可自行填写用 allow_custom=true 表达，推荐的填写值放 custom_placeholder。确认需求时，完整需求稿放在问题的 description；如果超过字段限制，先作为普通文本完整输出，description 只放摘要。prompt 始终只写一句简短问题，不重复正文。
 
 **每次让用户选，都给推荐**——推荐统一写在 label 开头：`[推荐] 选项内容`；所有选项的 `recommended` 字段保持 false（宿主的推荐标记每题只允许一个，且会和前缀重复，所以只用前缀）。单选：一项带 [推荐]。多选：前 3 项带 [推荐]（不足 3 个可选项时全标），按推荐顺序排列。自由填写：custom_placeholder 给推荐值。每个推荐在 description 里附一句依据，推荐就是 Agent 自己判断的公开版本，让用户多数时候只需同意。
 
 **用户看到的一律是白话**：选项、画像、播报、报告都写给猎头看。Agent 的规格和记录（需求确认稿、内部报告）写到任务工作目录 `<TASK_WORK_DIR>/wts/` 下的文件里，给用户的文本是从文件渲染出来的视图；title 范围、公司层、置信度、candidate_ref 等内部字段只在文件和决策记录里出现。
+
+新建文件使用 `write_file`；修正已经存在的需求、计划或决策文件使用 `edit_file`。不要用临时脚本绕过字段校验或回改已经执行的历史计划。
 
 ### 播报
 
@@ -161,6 +163,8 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" probe --task
 - **site_filters**：取自硬性筛选条件中页面有控件的字段；岗位意图由关键词表达。
 - **hard_filters**：全部明确的硬性筛选条件，以及排除信号中页面数据能验证的项。
 - **semantic_criteria**：必须满足、加分项、排除信号，照录当前需求版本。
+- **requirement_version**：从第 1 轮起写入当前已确认需求版本。同一版本只允许调整查询和合理的站内筛选，不得替换或删除 hard_filters、semantic_criteria。
+- **decision_basis**：第 2 轮起保存截至上一轮的全部候选人原始评分、证据引用、首次评分轮次、PRF 判定和下一步；退出 Top 10 的候选人也保留。Builder 使用真实执行工作流中的计划快照校验，不能通过回改旧 iteration 文件绕过一致性检查。
 
 完成标准：iteration-N.json 已写入，两路查询、筛选和评分项都能回溯到当前需求版本。
 
@@ -169,6 +173,8 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" probe --task
 ```
 python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --task-id TASK_ID --iteration N --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N.json"
 ```
+
+默认使用拟人交互；需要即时操作时可显式加 `--interaction-mode direct`。`human` 模式由宿主执行渐进移动、逐字输入和有界滚动，不保证规避站点风控；执行 workflow_ref 时不能临时覆盖 Builder 固化的模式。
 
 校验失败时按返回的错误原因原地修正同一个 iteration-N.json 并重新编译一次；仍失败则停止并说明。
 
@@ -180,7 +186,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 ### 10. 读取结果
 
-先检查运行结果的 status、error_code、summary.metrics、summary.sections 和显式业务 summary。对 success 或 partial 结果，用 browser_read_workflow_result 读 details.primary，有第二路再读 details.secondary，每批最多 10 条，直到两路详情读完；partial 或任一路径 search.*.unsupported_filters 非空时再读 search。需要解释其他失败时再读 candidates 和 failures。
+先检查运行结果的 status、error_code、summary.metrics、summary.sections 和显式业务 summary。对 success 或 partial 结果，用 browser_read_workflow_result 读 details.primary，有第二路再读 details.secondary，每批最多 10 条；返回 `next_offset` 时用它继续读取，直到两路详情读完。不要因为已得到首批结果而重复从 offset 0 读取。partial 或任一路径 search.*.unsupported_filters 非空时再读 search。需要解释其他失败时再读 candidates 和 failures；空值按信息缺失处理，不用临时脚本强制转换。
 
 完成标准：两路 details 全部读完；partial 时已知道哪个站内筛选条件降级。
 
@@ -188,7 +194,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 ### 11. 隔离评分
 
-仅对详情硬筛状态为 matched 或 unknown、且当前需求版本下尚未评分的候选人评分，跨轮按 candidate_ref 去重。按 `references/scoring.md` 逐人评分，各人互相独立，宿主支持并行时并行执行（默认并发 10、单次 60 秒）。评完后重排 Top 10，并把高分候选人的当前与过往公司按步骤 3.5 的规则加入目标公司池。
+仅对详情硬筛状态为 matched 或 unknown、且当前需求版本下尚未评分的候选人评分，跨轮按 candidate_ref 去重。按 `references/scoring.md` 逐人评分，各人互相独立。先复用最近 `decision_basis` 中已经完成的评分，只补本轮新人；需求变更、新详情证据或明确的事实/计算错误才允许重评，并记录 correction_reason。Builder 确定性计算总分、计数和 Top 10，退出榜单的历史评分继续保留。评完后把高分候选人的当前与过往公司按步骤 3.5 的规则加入目标公司池。
 
 完成标准：本轮每位 matched/unknown 候选人都有评分记录；Top 10 与目标公司池已更新。
 
@@ -201,6 +207,8 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 ### 13. 反思（只有建议权）
 
 写一段不超过 5 句的反思：本轮两路各自的新增/重复情况；对现有活跃词和备用词提出激活 / 保留 / 降权 / 移除；对站内筛选字段提出保留 / 移除 / 新增（只限契约列出的字段）；从目标公司池中提议下一轮公司词（或提议不带），附一句依据；如认为可以停止，给出理由。反思可以记录对待试词的观察，但晋升、造词、改词表、写查询都是步骤 12 和 14 的权限。仍有未试的活跃词或备用词且榜单未达强池时，反思的停止建议无效。
+
+反思和 Controller 是当前推理步骤，不是 Builder 子命令；Builder 不存在 `reflect` 子命令。
 
 ### 14. Controller 决策
 
@@ -220,7 +228,7 @@ Controller 是停止与下一轮关键词的最终决策者，按下列优先级
 
 ### 15. 终态报告
 
-按 `references/final-report.md`：先把内部记录写成 `<TASK_WORK_DIR>/wts/report.json`（含市场洞察三小节全文），再从它渲染用户视图输出。
+把最终 `decision_basis` 写到 `<TASK_WORK_DIR>/wts/final-decision.json`，其中 completed_iteration 是最后已完成轮次、next_action.action 为 report。执行 `settle --iteration N`，N 仍是最后已完成轮次，不新增第 N+1 轮。Builder 生成 `<TASK_WORK_DIR>/wts/final-report-data.json`；读取其中已核验的 Top 10 姓名、真实链接、分数、证据和 unknown，再按 `references/final-report.md` 补充现有市场洞察并渲染用户视图，不扫描结果目录或重新评分。
 
 完成标准：report.json 已写入；用户视图里每位 Top 10 候选人都有一行和真实链接。
 
