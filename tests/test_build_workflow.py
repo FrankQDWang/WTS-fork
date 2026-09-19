@@ -79,6 +79,47 @@ class BuildWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["interaction_mode"], "human")
         self.assertIn("interaction.human.v1", workflow["required_capabilities"])
 
+    def test_direct_override_omits_human_capability(self) -> None:
+        args = self.args("preflight", 0)
+        args.interaction_mode = "direct"
+        workflow = build_workflow.build_preflight(args, self.assets)
+        self.assertEqual(workflow["interaction_mode"], "direct")
+        self.assertNotIn("interaction.human.v1", workflow["required_capabilities"])
+
+    def test_human_search_browses_details_without_removing_pacing(self) -> None:
+        workflow = build_workflow.build_search(
+            self.args(
+                "search",
+                1,
+                {
+                    "primary_query": "AI Agent LangGraph",
+                    "site_filters": {},
+                    "hard_filters": {},
+                    "semantic_criteria": {
+                        "must_have": ["Agent 经验"],
+                        "nice_to_have": [],
+                        "exclude_signals": [],
+                    },
+                },
+            ),
+            self.assets,
+        )
+        encoded = json.dumps(workflow, ensure_ascii=False)
+        self.assertIn('"op": "page.scroll"', encoded)
+        self.assertIn("pacing-before", encoded)
+
+    def test_human_probe_keeps_company_probe_behavior(self) -> None:
+        workflow = build_workflow.build_probe(
+            self.args(
+                "probe",
+                1,
+                {"anchor": "AI Agent", "companies": ["阿里巴巴"], "site_filters": {}},
+            ),
+            self.assets,
+        )
+        self.assertEqual(workflow["interaction_mode"], "human")
+        self.assertEqual(workflow["steps"][-1]["value"]["summary"]["workflow"], "company_probe")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 {
   "channel_id": "liepin",
   "display_name": "猎聘",
+  "interaction_mode": "human",
   "rule_version": "liepin-2026.08.25.1",
   "allowed_domains": [
     "h.liepin.com",

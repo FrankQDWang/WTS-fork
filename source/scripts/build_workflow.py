@@ -35,6 +35,8 @@ PAGE_OPS = {
     "page.click",
     "page.fill",
     "page.press",
+    "page.scroll",
+    "page.hover",
     "page.extract",
     "page.extract_list",
     "data.set",
@@ -1048,6 +1050,7 @@ def compile_path_steps(
     assets: dict[str, Any],
     plan: dict[str, Any],
     channel: dict[str, Any],
+    interaction_mode: str = "direct",
     drop_step_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     generated = {
@@ -1065,6 +1068,10 @@ def compile_path_steps(
         "details_key": f"details_{path_name}",
         "detail_filter_key": f"detail_filter_{path_name}",
         "failures_key": f"failures_{path_name}",
+        "detail_browse_program": ([
+            {"id": "browse-detail", "op": "page.scroll", "direction": "down", "distance": 600},
+            {"id": "detect-after-detail-scroll", "op": "page.detect", "rules": channel["page_detection"]},
+        ] if interaction_mode == "human" else []),
     }
     steps = resolve_template(
         assets["workflows"]["search"]["path_steps"],
@@ -1168,6 +1175,9 @@ def build_probe_emit_step(paths: list[dict[str, Any]], anchor: str) -> dict[str,
 
 def base_workflow(args: argparse.Namespace, template: dict[str, Any], channel: dict[str, Any]) -> dict[str, Any]:
     created_at = datetime.now(timezone.utc)
+    interaction_mode = getattr(args, "interaction_mode", None) or channel.get("interaction_mode", "direct")
+    if interaction_mode not in {"direct", "human"}:
+        raise ValueError("interaction_mode 仅支持 direct 或 human")
     return {
         "schema_version": SCHEMA_VERSION,
         "workflow_schema": WORKFLOW_SCHEMA,
@@ -1175,6 +1185,7 @@ def base_workflow(args: argparse.Namespace, template: dict[str, Any], channel: d
         "workflow_type": template["workflow_type"],
         "task_id": args.task_id,
         "iteration": args.iteration,
+        "interaction_mode": interaction_mode,
         "created_at": created_at.isoformat().replace("+00:00", "Z"),
         "expires_at": (created_at + timedelta(minutes=args.deadline_minutes))
         .isoformat()
@@ -1186,7 +1197,10 @@ def base_workflow(args: argparse.Namespace, template: dict[str, Any], channel: d
             "rule_version": channel["rule_version"],
         },
         "allowed_domains": channel["allowed_domains"],
-        "required_capabilities": template["required_capabilities"],
+        "required_capabilities": [
+            *template["required_capabilities"],
+            *(["interaction.human.v1"] if interaction_mode == "human" else []),
+        ],
     }
 
 
@@ -1222,6 +1236,7 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
         raise ValueError("第 1 轮不能设置 secondary_query")
     channel = assets["channel"]
     template = assets["workflows"]["search"]
+    workflow = base_workflow(args, template, channel)
     limits = plan["limits"]
     action_delay_ms = bounded_integer(
         plan.get("action_delay_ms"),
@@ -1270,12 +1285,12 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
                 assets=assets,
                 plan=plan,
                 channel=channel,
+                interaction_mode=workflow["interaction_mode"],
             )
         )
     steps.append(build_emit_step(paths))
     total_details = sum(path["max_details"] for path in paths)
     total_cards = limits["max_cards_per_path"] * len(paths)
-    workflow = base_workflow(args, template, channel)
     workflow["limits"] = {
         "max_pages": 1,
         "max_candidates": total_cards,
@@ -1311,6 +1326,7 @@ def build_probe(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, A
     plan, warnings = read_probe_plan(args.plan_file)
     channel = assets["channel"]
     template = assets["workflows"]["probe"]
+    workflow = base_workflow(args, template, channel)
     action_delay_ms = bounded_integer(
         plan.get("action_delay_ms"),
         1200,
@@ -1346,12 +1362,12 @@ def build_probe(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, A
                 assets=assets,
                 plan=plan,
                 channel=channel,
+                interaction_mode=workflow["interaction_mode"],
                 drop_step_ids={"card-hard-filter"},
             )
         )
     steps.append(build_probe_emit_step(paths, plan["anchor"]))
     total_cards = MAX_CARDS_PER_PATH * len(paths)
-    workflow = base_workflow(args, template, channel)
     workflow["limits"] = {
         "max_pages": 1,
         "max_candidates": total_cards,
@@ -1426,6 +1442,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task-work-dir", default=os.environ.get("DEEPAGENT_TASK_WORK_DIR", ""))
     parser.add_argument("--store-root", default=os.environ.get("DEEPAGENT_WORKFLOW_STORE_DIR", ""))
     parser.add_argument("--deadline-minutes", type=int, default=20)
+    parser.add_argument(
+        "--interaction-mode",
+        choices=["direct", "human"],
+        help="交互模式；省略时使用渠道资产的默认值",
+    )
     args = parser.parse_args()
     if not TASK_ID_PATTERN.fullmatch(args.task_id):
         parser.error("--task-id 仅支持 1-100 位字母、数字、点、下划线和短横线")

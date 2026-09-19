@@ -20,6 +20,7 @@
       },
       "timeout_ms": {"$channel": "timing.detail_timeout_ms"}
     },
+    {"$generated": "detail_browse_program"},
     {
       "id": "stabilize-detail",
       "op": "page.wait",
