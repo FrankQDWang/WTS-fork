@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_ROOT = REPO_ROOT / "source" / "scripts"
+sys.path.insert(0, str(SCRIPT_ROOT))
+
+import build_workflow  # noqa: E402
+
+
+class BuildWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.assets = build_workflow.load_assets()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def args(self, workflow_type: str, iteration: int, plan: dict | None = None):
+        plan_path = self.root / f"{workflow_type}-{iteration}.json"
+        if plan is not None:
+            plan_path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+        return argparse.Namespace(
+            workflow_type=workflow_type,
+            task_id="task-1",
+            iteration=iteration,
+            plan_file=str(plan_path),
+            decision_file="",
+            task_work_dir=str(self.root),
+            store_root=str(self.root),
+            deadline_minutes=20,
+            interaction_mode=None,
+        )
+
+    def test_current_preflight_search_and_probe_compile(self) -> None:
+        preflight = build_workflow.build_preflight(self.args("preflight", 0), self.assets)
+        self.assertTrue(any(step["id"] == "open-channel-search" for step in preflight["steps"]))
+
+        search = build_workflow.build_search(
+            self.args(
+                "search",
+                1,
+                {
+                    "primary_query": "AI Agent LangGraph",
+                    "site_filters": {},
+                    "hard_filters": {},
+                    "semantic_criteria": {
+                        "must_have": ["Agent 经验"],
+                        "nice_to_have": [],
+                        "exclude_signals": [],
+                    },
+                },
+            ),
+            self.assets,
+        )
+        self.assertTrue(any("pacing" in json.dumps(step) for step in search["steps"]))
+
+        probe = build_workflow.build_probe(
+            self.args(
+                "probe",
+                1,
+                {"anchor": "AI Agent", "companies": ["阿里巴巴"], "site_filters": {}},
+            ),
+            self.assets,
+        )
+        self.assertEqual(probe["input_summary"]["probe"], True)
+        self.assertEqual(probe["steps"][-1]["value"]["summary"]["workflow"], "company_probe")
+
+    def test_channel_default_compiles_human_interaction_metadata(self) -> None:
+        workflow = build_workflow.build_preflight(self.args("preflight", 0), self.assets)
+        self.assertEqual(workflow["interaction_mode"], "human")
+        self.assertIn("interaction.human.v1", workflow["required_capabilities"])
+
+
+if __name__ == "__main__":
+    unittest.main()
