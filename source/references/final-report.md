@@ -1,6 +1,6 @@
 # 终态报告
 
-步骤 15 读。先把内部记录写成 JSON 文件，再从它渲染给用户看的报告。
+步骤 15 读。先通过 Builder 的 `settle --iteration N` 读取最后已完成轮次和最终 decision_basis，生成 `<TASK_WORK_DIR>/wts/final-report-data.json`，再从它与现有市场洞察记录渲染给用户看的报告。N 是最后完成轮次，不创建额外搜索轮次。
 
 ## 内部记录
 

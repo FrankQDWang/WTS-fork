@@ -16,11 +16,13 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `requirement_version` | string | 从第 1 轮起填写已确认需求版本；同版本条件保持一致 |
 | `primary_query` | string | 必填，1-50 字符；主路径自然语言查询，不使用 `OR`、`AND`、`NOT`。可含 1 个公司词（SKILL.md 步骤 3.5） |
 | `secondary_query` | string | 可选；第二路自然语言查询，只含锚点和支持词。第 1 轮禁止出现 |
 | `site_filters` | object | 猎聘页面可直接设置的筛选条件 |
 | `hard_filters` | object | Builder 将其编译为通用 `data.filter` 谓词；先做卡片预筛，再做详情终筛 |
 | `semantic_criteria` | object | 给隔离评分用，不编译进页面动作 |
+| `decision_basis` | object | 第 2 轮起必填；保存截至上一轮的完整评分、PRF 判定和既定下一步 |
 | `limits.max_cards_per_path` | integer | 1-30，默认 30；每路首屏最多抽取的卡片数 |
 | `limits.primary_max_details` | integer | 0-5，默认 5 |
 | `limits.secondary_max_details` | integer | 0-3，默认 3；没有第二路时视为 0 |
@@ -35,6 +37,10 @@ Builder 把每份详情的 15 秒预算分配到读取列表位置、点击打�
 - `must_have`：必须满足，最多 20 条
 - `nice_to_have`：加分项，最多 20 条
 - `exclude_signals`：排除信号，最多 20 条
+
+`decision_basis` 的字段与示例以 Builder 校验为准：`requirement_version`、`completed_iteration`、`candidate_scores`、`prf_decision`、`next_action`。同一需求版本的 `hard_filters` 与 `semantic_criteria` 必须保持一致；只换关键词不能同步改写条件。每条候选人评分保留 candidate_ref、真实 detail_ref、详情分区、首次评分轮次、三维原始分、matches、unknown 和证据说明。纠错或需求版本变化时写 correction_reason，但不改首次评分轮次，也不删除历史候选人。
+
+Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`。下一轮及 settle 从已完成工作流恢复真实执行计划；旧 iteration 文件即使被修改，也不作为绕过一致性校验的依据。
 
 ## 站内筛选字段
 

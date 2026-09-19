@@ -7,12 +7,14 @@ import hashlib
 import json
 import os
 import re
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from pacing import pace_preflight, pace_search_path
+from decision_basis import decision_receipt
 
 
 SKILL_NAME = "wts"
@@ -35,6 +37,8 @@ PAGE_OPS = {
     "page.click",
     "page.fill",
     "page.press",
+    "page.scroll",
+    "page.hover",
     "page.extract",
     "page.extract_list",
     "data.set",
@@ -97,6 +101,7 @@ ALLOWED_HARD_FILTER_KEYS = {
     "required_keyword_groups",
 }
 ALLOWED_PLAN_KEYS = {
+    "requirement_version",
     "primary_query",
     "secondary_query",
     "keyword_text",
@@ -106,6 +111,7 @@ ALLOWED_PLAN_KEYS = {
     "allow_partial_filters",
     "limits",
     "action_delay_ms",
+    "decision_basis",
 }
 ALLOWED_PROBE_PLAN_KEYS = {"anchor", "companies", "site_filters", "action_delay_ms"}
 ALLOWED_SEMANTIC_KEYS = {"must_have", "nice_to_have", "exclude_signals"}
@@ -459,6 +465,14 @@ def read_plan(plan_path: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
     unknown_keys = sorted(set(plan) - ALLOWED_PLAN_KEYS)
     if unknown_keys:
         raise ValueError(f"搜索计划包含未知字段: {', '.join(unknown_keys)}")
+    basis = plan.get("decision_basis")
+    version = plan.get(
+        "requirement_version",
+        basis.get("requirement_version", "v1") if isinstance(basis, dict) else "v1",
+    )
+    if not isinstance(version, str) or not version.strip() or len(version) > 80:
+        raise ValueError("requirement_version 必须是 1-80 字符的已确认需求版本")
+    plan["requirement_version"] = version.strip()
     if "keyword_text" in plan and "primary_query" in plan:
         if str(plan["keyword_text"]).strip() != str(plan["primary_query"]).strip():
             raise ValueError("keyword_text 与 primary_query 不一致；请只使用 primary_query")
@@ -1048,6 +1062,7 @@ def compile_path_steps(
     assets: dict[str, Any],
     plan: dict[str, Any],
     channel: dict[str, Any],
+    interaction_mode: str = "direct",
     drop_step_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     generated = {
@@ -1065,6 +1080,10 @@ def compile_path_steps(
         "details_key": f"details_{path_name}",
         "detail_filter_key": f"detail_filter_{path_name}",
         "failures_key": f"failures_{path_name}",
+        "detail_browse_program": ([
+            {"id": "browse-detail", "op": "page.scroll", "direction": "down", "distance": 600},
+            {"id": "detect-after-detail-scroll", "op": "page.detect", "rules": channel["page_detection"]},
+        ] if interaction_mode == "human" else []),
     }
     steps = resolve_template(
         assets["workflows"]["search"]["path_steps"],
@@ -1168,6 +1187,9 @@ def build_probe_emit_step(paths: list[dict[str, Any]], anchor: str) -> dict[str,
 
 def base_workflow(args: argparse.Namespace, template: dict[str, Any], channel: dict[str, Any]) -> dict[str, Any]:
     created_at = datetime.now(timezone.utc)
+    interaction_mode = getattr(args, "interaction_mode", None) or channel.get("interaction_mode", "direct")
+    if interaction_mode not in {"direct", "human"}:
+        raise ValueError("interaction_mode 仅支持 direct 或 human")
     return {
         "schema_version": SCHEMA_VERSION,
         "workflow_schema": WORKFLOW_SCHEMA,
@@ -1175,6 +1197,7 @@ def base_workflow(args: argparse.Namespace, template: dict[str, Any], channel: d
         "workflow_type": template["workflow_type"],
         "task_id": args.task_id,
         "iteration": args.iteration,
+        "interaction_mode": interaction_mode,
         "created_at": created_at.isoformat().replace("+00:00", "Z"),
         "expires_at": (created_at + timedelta(minutes=args.deadline_minutes))
         .isoformat()
@@ -1186,7 +1209,10 @@ def base_workflow(args: argparse.Namespace, template: dict[str, Any], channel: d
             "rule_version": channel["rule_version"],
         },
         "allowed_domains": channel["allowed_domains"],
-        "required_capabilities": template["required_capabilities"],
+        "required_capabilities": [
+            *template["required_capabilities"],
+            *(["interaction.human.v1"] if interaction_mode == "human" else []),
+        ],
     }
 
 
@@ -1218,10 +1244,21 @@ def build_preflight(args: argparse.Namespace, assets: dict[str, Any]) -> dict[st
 
 def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
     plan, warnings = read_plan(args.plan_file)
+    previous_plan = executed_plan(args, args.iteration - 1) if args.iteration > 1 else None
+    if previous_plan and not plan.get("decision_basis"):
+        raise ValueError("第 2 轮起必须填写 decision_basis，不能删除它来跳过条件与历史评分校验")
+    args.decision_receipt = decision_receipt(
+        plan,
+        iteration=args.iteration,
+        task_id=args.task_id,
+        store_root=Path(args.store_root).expanduser().resolve(),
+        previous_plan=previous_plan,
+    )
     if args.iteration == 1 and plan.get("secondary_query"):
         raise ValueError("第 1 轮不能设置 secondary_query")
     channel = assets["channel"]
     template = assets["workflows"]["search"]
+    workflow = base_workflow(args, template, channel)
     limits = plan["limits"]
     action_delay_ms = bounded_integer(
         plan.get("action_delay_ms"),
@@ -1270,12 +1307,12 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
                 assets=assets,
                 plan=plan,
                 channel=channel,
+                interaction_mode=workflow["interaction_mode"],
             )
         )
     steps.append(build_emit_step(paths))
     total_details = sum(path["max_details"] for path in paths)
     total_cards = limits["max_cards_per_path"] * len(paths)
-    workflow = base_workflow(args, template, channel)
     workflow["limits"] = {
         "max_pages": 1,
         "max_candidates": total_cards,
@@ -1290,6 +1327,7 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
         "poll_interval_ms": channel["timing"]["poll_interval_ms"],
     }
     workflow["input_summary"] = {
+        "requirement_version": plan["requirement_version"],
         "primary_query": plan["primary_query"],
         "secondary_query": plan.get("secondary_query"),
         "site_filter_fields": sorted(site_filter_fields),
@@ -1302,15 +1340,61 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
         },
         "warnings": warnings,
     }
+    # The workflow digest protects this snapshot. Later rounds validate the
+    # plan that actually ran instead of trusting an editable historical file.
+    workflow["input_plan"] = copy.deepcopy(plan)
     workflow["steps"] = steps
     validate_workflow(workflow)
     return workflow
+
+
+def executed_plan(args: argparse.Namespace, iteration: int) -> dict[str, Any]:
+    """Recover the most recently completed plan for a round from immutable stores."""
+    root = Path(args.store_root).expanduser().resolve()
+    workflows: dict[str, dict[str, Any]] = {}
+    for path in (root / "workflow-store" / args.task_id).glob("*.json"):
+        if not path.resolve().is_relative_to(root) or path.stat().st_size > 256 * 1024:
+            raise ValueError("历史工作流越界或超过大小限制")
+        workflow = load_json(path)
+        if (
+            workflow.get("task_id") != args.task_id
+            or workflow.get("iteration") != iteration
+            or (workflow.get("skill") or {}).get("name") != SKILL_NAME
+        ):
+            continue
+        integrity = workflow.pop("integrity", {})
+        digest = hashlib.sha256(canonical_bytes(workflow)).hexdigest()
+        if digest != path.stem or integrity.get("digest") != digest:
+            raise ValueError("历史工作流摘要不匹配，不能依据已变化的计划继续")
+        if isinstance(workflow.get("input_plan"), dict):
+            workflows[workflow["workflow_id"]] = workflow["input_plan"]
+    if not workflows:
+        # Compatibility for workflows compiled before input_plan was recorded.
+        return read_plan(str(expected_search_plan_path(Path(args.task_work_dir), iteration)))[0]
+
+    completed: list[tuple[str, str]] = []
+    for path in (root / "result-store" / args.task_id).glob("*.json"):
+        if not path.resolve().is_relative_to(root) or path.stat().st_size > 16 * 1024 * 1024:
+            raise ValueError("历史结果越界或超过大小限制")
+        raw = path.read_bytes()
+        result = json.loads(raw)
+        metadata = result.get("workflow") or {}
+        workflow_id = metadata.get("workflow_id")
+        if workflow_id not in workflows or result.get("status") not in {"success", "partial"}:
+            continue
+        if metadata.get("task_id") != args.task_id or hashlib.sha256(raw).hexdigest() != path.stem:
+            raise ValueError("历史结果任务或摘要不匹配，不能复用执行计划")
+        completed.append((metadata.get("finished_at") or "", workflow_id))
+    if not completed:
+        raise ValueError(f"第 {iteration} 轮没有已完成结果；先读取执行状态对账，不能跳过该轮或原样重跑")
+    return workflows[max(completed)[1]]
 
 
 def build_probe(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
     plan, warnings = read_probe_plan(args.plan_file)
     channel = assets["channel"]
     template = assets["workflows"]["probe"]
+    workflow = base_workflow(args, template, channel)
     action_delay_ms = bounded_integer(
         plan.get("action_delay_ms"),
         1200,
@@ -1346,12 +1430,12 @@ def build_probe(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, A
                 assets=assets,
                 plan=plan,
                 channel=channel,
+                interaction_mode=workflow["interaction_mode"],
                 drop_step_ids={"card-hard-filter"},
             )
         )
     steps.append(build_probe_emit_step(paths, plan["anchor"]))
     total_cards = MAX_CARDS_PER_PATH * len(paths)
-    workflow = base_workflow(args, template, channel)
     workflow["limits"] = {
         "max_pages": 1,
         "max_candidates": total_cards,
@@ -1417,15 +1501,69 @@ def save_workflow(workflow: dict[str, Any], store_root: Path) -> dict[str, Any]:
     }
 
 
+def settle_search(args: argparse.Namespace) -> dict[str, Any]:
+    """Validate the last completed round and materialize final report data."""
+    plan = executed_plan(args, args.iteration)
+    decision_path = Path(args.decision_file)
+    if not decision_path.is_file():
+        raise ValueError(
+            f"先用 write_file 创建最终 decision_basis：{decision_path}；"
+            f"completed_iteration={args.iteration}，next_action.action=report"
+        )
+    if decision_path.stat().st_size > 64 * 1024:
+        raise ValueError("最终评分快照不能超过 64 KiB")
+    report_data: dict[str, Any] = {}
+    receipt = decision_receipt(
+        {**plan, "decision_basis": load_json(decision_path)},
+        iteration=args.iteration + 1,
+        task_id=args.task_id,
+        store_root=Path(args.store_root),
+        previous_plan=plan,
+        settle=True,
+        report_data=report_data,
+    )
+    report_path = Path(args.task_work_dir) / SKILL_NAME / "final-report-data.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = report_path.with_name(f".{report_path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(report_data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        temporary.replace(report_path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return {
+        "status": "success",
+        "decision_receipt": receipt,
+        "report_data_file": str(report_path),
+        "next_action": {
+            "action": "report",
+            "instruction": "读取 report_data_file，使用其中已核验的姓名、detail_url、分数、证据和 unknown 交付报告；null 明确写缺失。无需扫描结果目录或重评。",
+        },
+    }
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Compile a channel Skill into an immutable browser workflow")
-    parser.add_argument("workflow_type", choices=["preflight", "search", "probe"])
+    parser = argparse.ArgumentParser(
+        description="WTS：preflight 登录前置；probe 公司探测；search 编译搜索；settle 结算最后已完成轮次",
+        epilog="没有 reflect 子命令。settle --iteration N 使用最后已完成轮次 N，不是 N+1。",
+    )
+    parser.add_argument("workflow_type", choices=["preflight", "probe", "search", "settle"])
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--iteration", type=int, default=0)
     parser.add_argument("--plan-file")
+    parser.add_argument("--decision-file", help="settle 默认读取任务目录 wts/final-decision.json")
     parser.add_argument("--task-work-dir", default=os.environ.get("DEEPAGENT_TASK_WORK_DIR", ""))
     parser.add_argument("--store-root", default=os.environ.get("DEEPAGENT_WORKFLOW_STORE_DIR", ""))
     parser.add_argument("--deadline-minutes", type=int, default=20)
+    parser.add_argument(
+        "--interaction-mode",
+        choices=["direct", "human"],
+        help="交互模式；省略时使用渠道资产的默认值",
+    )
     args = parser.parse_args()
     if not TASK_ID_PATTERN.fullmatch(args.task_id):
         parser.error("--task-id 仅支持 1-100 位字母、数字、点、下划线和短横线")
@@ -1433,9 +1571,9 @@ def parse_args() -> argparse.Namespace:
         parser.error("--iteration 必须在 0-100 之间")
     if args.workflow_type == "preflight" and args.iteration != 0:
         parser.error("preflight 的 --iteration 必须为 0")
-    if args.workflow_type == "search" and not 1 <= args.iteration <= MAX_SEARCH_ITERATION:
+    if args.workflow_type in {"search", "settle"} and not 1 <= args.iteration <= MAX_SEARCH_ITERATION:
         parser.error(
-            f"search 的 --iteration 仅支持 1-{MAX_SEARCH_ITERATION}（允许提前停止）"
+            f"{args.workflow_type} 的 --iteration 仅支持 1-{MAX_SEARCH_ITERATION}；settle 填最后已完成轮次"
         )
     if args.workflow_type == "probe" and args.iteration != PROBE_ITERATION:
         parser.error(
@@ -1469,18 +1607,51 @@ def parse_args() -> argparse.Namespace:
         if plan_path != expected_plan:
             parser.error(f"--plan-file 路径无效；当前轮次只能使用 {expected_plan}")
         args.plan_file = str(plan_path)
+    if args.workflow_type == "settle":
+        expected_plan = expected_search_plan_path(task_work_dir, args.iteration)
+        if args.plan_file and Path(args.plan_file).expanduser().resolve() != expected_plan:
+            parser.error(f"--plan-file 路径无效；当前轮次只能使用 {expected_plan}")
+        args.plan_file = str(expected_plan)
+        expected_decision = (task_work_dir / SKILL_NAME / "final-decision.json").resolve()
+        if args.decision_file and Path(args.decision_file).expanduser().resolve() != expected_decision:
+            parser.error(f"settle 的 --decision-file 必须为 {expected_decision}")
+        args.decision_file = str(expected_decision)
     args.deadline_minutes = bounded_integer(args.deadline_minutes, 20, 5, 30)
     return args
 
 
 def main() -> None:
     args = parse_args()
+    if args.workflow_type == "settle":
+        print(json.dumps(settle_search(args), ensure_ascii=False, separators=(",", ":")))
+        return
     assets = load_assets()
     builders = {"preflight": build_preflight, "search": build_search, "probe": build_probe}
     workflow = builders[args.workflow_type](args, assets)
     output = save_workflow(workflow, Path(args.store_root).expanduser().resolve())
+    if getattr(args, "decision_receipt", None) is not None:
+        output["decision_receipt"] = args.decision_receipt
+    output["next_action"] = {
+        "tool": "browser_run_workflow",
+        "task_id": args.task_id,
+        "workflow_ref": output["workflow_ref"],
+        "instruction": "编译成功。使用此引用执行既定工作流；不要重新评分或重新选择关键词。",
+    }
     print(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, OSError) as error:
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "error": str(error),
+                    "instruction": "按具体错误修正当前输入；已有文件用 edit_file，不回改已执行计划，不猜测额外子命令。",
+                },
+                ensure_ascii=False,
+            )
+        )
+        sys.exit(2)
