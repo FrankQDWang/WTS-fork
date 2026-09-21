@@ -27,12 +27,15 @@ WTS/
 │   ├── references/
 │   └── scripts/
 ├── test-cases/                     # 跨版本复用的 JD Benchmark
-│   └── case-001-system-architect.md
+│   ├── case-001-system-architect.md
+│   └── automated/                  # 当前 source 的自动化回归测试
 └── versions/                       # 已发布的冻结测试版本
     ├── wts-v0-1/
     ├── wts-v0-2/
     └── wts-v0-3/
 ```
+
+仓库顶层目录采用白名单管理，只允许 `collaborators/`、`source/`、`test-cases/` 和 `versions/`。根目录可以保留 `.gitignore`、`README.md` 等文件，但未经仓库所有者明确同意，不得新增其他顶层目录。
 
 ## 各目录的职责
 
@@ -57,7 +60,9 @@ WTS/
 
 ### `test-cases/`
 
-`test-cases/` 保存全部 WTS 版本共用的岗位 JD。每个 Markdown 同时记录冻结输入和人工评估参考。
+`test-cases/` 根目录保存全部 WTS 版本共用的岗位 JD。每个 Markdown 同时记录冻结输入和人工评估参考。
+
+`test-cases/automated/` 保存当前 `source/` 的自动化回归测试，包括 Builder、决策校验、Skill 契约和仓库顶层目录白名单。自动化测试不是提供给待测 Agent 的 JD 输入。
 
 运行测试时，**只能把“测试输入”边界中的 JD 提交给 Agent**。“测试目的”、“关键观察点”、“成功信号”和“失败信号”只供测试者复盘，不得泄露给被测 Agent。
 
@@ -115,6 +120,16 @@ JD Case 本身不记录每次运行历史，避免每次测试都回写和修改
 ### 6. 复盘与比较
 
 复盘时先检查 SOP 是否遵循，再单独评价是否出现有价值的新判断、新路径或市场洞察。对于没有可观测证据的环节，标记“无法观测”，不用隐藏推理补齐。
+
+### 7. 运行自动化回归
+
+修改当前开发源或仓库结构后，运行：
+
+```bash
+python3 -m unittest discover -s test-cases/automated -v
+```
+
+顶层目录白名单测试必须通过后才能提交或合并。
 
 ## 隐私与本地文件
 
