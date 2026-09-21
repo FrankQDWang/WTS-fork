@@ -13,6 +13,7 @@
 | `coverage` | 【搜索覆盖】 | `{rounds, queries: {primary, secondary}, seen, new, recommendable, strong, expansions: [{iteration, expansion, opened, recommendable, strong}], skipped_seen, company_words: [{word, new_candidates}], probes: [{company, card_count, usable}], pool_size: {initial, from_candidates}, prf: {promoted: [], rejected: []}, degraded_filters: []}`；`seen` 含扩张打开的人，`skipped_seen` 是因已看台账被跳过的卡片数 |
 | `seen_ledger_path` | — | 本次已看台账 `<TASK_WORK_DIR>/wts/seen.json` 的绝对路径，供下一次寻访（步骤 16 选了备选方向后）合并 |
 | `not_recommended` | 【未推荐摘要】 | `{count, reasons: [{reason, count}]}`，看过但没进推荐名单的人按主要原因聚合，不列个人 |
+| `verify_in_interview` | 【面试核实项】 | 照录需求版本的 `verify_in_interview`，提醒用户这些条件没有参与筛选 |
 | `stop_reason` | 【停止原因】 | 强匹配足够 / 新增候选不足 / 多轮无进展 / 达到最大轮次 / 词族耗尽 / 预算，取一 |
 | `unmet` | 【未满足原因】 | `{gap_to_target, exhausted_families: [], unverifiable_hard_filters: []}` |
 | `failures` | 【失败项】 | `{candidate_ref, reason}`，含详情采集失败和没有 detail_url 的 |
@@ -38,6 +39,8 @@
 还差什么：<gap_to_target 为 0 时省去本节；否则一句话说差几位、哪些条件在市场上很难同时满足>
 
 没看到简历的：<failures 数量> 位，<原因白话>；为空则省去本节
+
+面试时请核实：<verify_in_interview 一行列举，这些条件简历看不出来，没参与筛选>；为空则省去本节
 
 市场观察：
 - 技能：<skills 小节的结论，两三句>
