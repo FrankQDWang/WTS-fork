@@ -1,10 +1,10 @@
 # 已看台账与轮内扩张
 
-步骤 1、10、11.5 读。台账回答"谁的详情已经打开过"，扩张回答"这一轮效果好时，再从同一页多看谁"。两者都不改变轮次结构：每轮仍是主路径 5 份、第二路 3 份详情。
+步骤 1、9、10、11.5 读。台账回答"谁的详情已经打开过"，扩张回答"这一轮效果好时，再从同一页多看谁"。两者都不改变轮次结构：每轮仍最多主路径 5 份、第二路 3 份详情。
 
 ## 已看台账
 
-路径：`<TASK_WORK_DIR>/wts/seen.json`。它是"已打开详情"的唯一事实来源；评分去重、搜索计划的 `exclude_candidate_refs`、扩张挑人都从它读。
+路径：`<TASK_WORK_DIR>/wts/seen.json`。它是"已打开详情"的唯一事实来源；常规采集和扩张前，Agent 都对照它去重。
 
 ```json
 {
@@ -35,17 +35,25 @@
 
 写入规则：
 
-- **步骤 10 读完结果立刻追加**。`details.*` 里每个人一条，`failures.*` 里每个人也一条（`detail_status: failed`）。已在台账里的 candidate_ref 不重复追加，也不改写首次记录。
-- **失败可重开一次**。`failed` 的人在下一轮不放进 `exclude_candidate_refs`；第二次仍失败就放进去，不再重开。
+- **步骤 10 得到索引立刻追加**。索引每人一条，`detail_ref` 对应台账 `result_ref`，`detail_section` 对应 `section`，`finished_at` 对应 `opened_at`；轮次与扩张次数取本次执行值。失败者的 `detail_status` 为 failed。已在台账里的 candidate_ref 不重复追加，也不改写首次记录。
+- **失败可重开一次**。只失败过一次的人下一轮可再选；第二次仍失败则跳过。
 - **rejected 也算已看**。详情硬筛淘汰的人已经有详情，不需要再打开；需求版本变化后从 `result_ref` 重读详情重评，而不是重新打开页面。
-- **跨任务合并**。步骤 1 发现对话历史里有上一次寻访报告的 `seen_ledger_path` 时，把那份台账的 `entries` 全部并入本次，`merged_from` 记下来源。合并进来的人同样进 `exclude_candidate_refs`。
+- **跨任务合并**。步骤 1 发现对话历史里有上一次寻访报告的 `seen_ledger_path` 时，把那份台账的 `entries` 全部并入本次，`merged_from` 记下来源。合并进来的人同样跳过。
 - **每次寻访结束**，台账路径写进 `report.json` 的 `seen_ledger_path`（`references/final-report.md`）。
 
-## 排除已看的人
+## 先挑人，再开详情
 
-第 2 轮起、或本次合并了上一次的台账时，`iteration-N.json` 的 `exclude_candidate_refs` = 台账里全部 candidate_ref（`failed` 且只失败过一次的除外）。Builder 把它编译成卡片谓词，命中的卡片在硬筛阶段被拒绝，理由记 `already_seen`，不占详情预算。这样每轮固定的 5 份和 3 份详情自然落到没看过的人身上。
+search 只读卡片，不开详情。Agent 用 browser_read_workflow_result 读完 `candidates.primary` 和存在的 `candidates.secondary`（有 next_offset 就继续），按 candidate_ref 对照台账去重，排除 rejected，两路间也去重；从剩余卡片挑选主路径最多 5 人、第二路最多 3 人。不要因为某人被跳过就新增台账记录。
 
-结果里 `candidates.<path>` 中 `card_hard_filter_reasons` 含 `already_seen` 的卡片数就是"因已看被跳过"的人数，进 `coverage.skipped_seen`，播报里可以说"这一页有 X 位上次已经看过，直接跳过了"。
+把该次卡片结果的 result_ref 和两路名单写入 `iteration-N-collect.json`，格式见 `references/search-plan.md`，编译：
+
+```
+python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" collect --task-id TASK_ID --iteration N --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N-collect.json"
+```
+
+再执行返回的 workflow_ref。collect 沿用原查询和筛选，重新定位列表，只打开名单内的人；列表变化后找不到的人不换人补位。无人可选的路径写 []，全部为空时也执行 collect，作为本轮完成记录。详情从 collect 的 result_ref 读取和评分，搜索覆盖从 search 结果统计。
+
+`coverage.skipped_seen` 由 Agent 统计本轮卡片中因台账被跳过的不同 candidate_ref 数。去重由 Agent 完成，Builder 不再生成排除谓词。
 
 ## 轮内扩张
 

@@ -14,7 +14,7 @@
 | `key_judgments` | 【关键判断】 | 3–6 条 `{kind, judgment, basis}`，kind ∈ `anchor` / `must_have` / `conflict` / `assumption`；剩余 [假设] 全部以 `assumption` 列出 |
 | `position` | 【岗位】 | `{title, primary_anchor, secondary_anchor, anchor_source: "title" \| "jd_summary", level_years}` |
 | `mission` | 【岗位使命】 | 一句话 |
-| `must_have` | 【必须满足】 | ≤8 条 `{text, source, evidence_section}`，source 如 "JD 第 n 条" / "用户确认"；evidence_section 是简历可见性测试的结论，取 工作经历 / 项目经历 / 技能 / 教育经历 / 自我评价 之一 |
+| `must_have` | 【必须满足】 | ≤8 条 `{text, source, evidence_section}`，source 如 "JD 第 n 条" / "用户确认"；evidence_section 是优先取证区块，取 工作经历 / 项目经历 / 技能 / 教育经历 / 自我评价 之一 |
 | `nice_to_have` | 【加分项】 | `{text, evidence_section}` 数组，按重要性排序 |
 | `verify_in_interview` | 【面试核实项】 | `{text, source}` 数组；简历通常看不出来的要求（顶会论文、绩效、口碑、抗压等），不评分、不筛选 |
 | `exclude_signals` | 【排除信号】 | `{text, default: bool}` |

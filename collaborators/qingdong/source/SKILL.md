@@ -5,7 +5,7 @@ description: 猎聘寻访。用户给出 JD 或招聘需求要做需求澄清，
 
 # 猎聘智能寻访
 
-两个阶段，一条**确认门**：先把 JD 拆成需求确认稿并取得用户确认，确认之后才使用浏览器工具；确认后围绕唯一的**主池**按轮次检索，每轮一份 SearchPlan、一次搜索执行、一次隔离评分、一次反思、一次 Controller 决策；停止后输出终态报告，再列出**备选方向**请用户选择。
+两个阶段，一条**确认门**：先把 JD 拆成需求确认稿并取得用户确认，确认之后才使用浏览器工具；确认后围绕唯一的**主池**按轮次检索，每轮一份 SearchPlan，先读卡片、去重后采详情，再隔离评分、一次反思、一次 Controller 决策；停止后输出终态报告，再列出**备选方向**请用户选择。
 
 浏览器由 `scripts/build_workflow.py` 编译出的工作流驱动，Agent 只接触 workflow_ref 和 result_ref；**网络搜索工具**只在步骤 3.5 调研目标公司时使用。
 
@@ -179,9 +179,8 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" probe --task
 - **semantic_criteria**：必须满足、加分项、排除信号，照录当前需求版本。
 - **requirement_version**：从第 1 轮起写入当前已确认需求版本。同一版本只允许调整查询和合理的站内筛选，不得替换或删除 hard_filters、semantic_criteria。
 - **decision_basis**：第 2 轮起保存截至上一轮的全部候选人原始评分、证据引用、首次评分轮次、PRF 判定和下一步；退出 Top 10 的候选人也保留。Builder 使用真实执行工作流中的计划快照校验，不能通过回改旧 iteration 文件绕过一致性检查。
-- **exclude_candidate_refs**：已看台账里全部 candidate_ref（规则见 `references/seen-and-expand.md`）。第 2 轮起必填；第 1 轮只在合并了上一次台账时填。Builder 把它编译成卡片谓词，已看过的人不占本轮详情预算。
 
-完成标准：iteration-N.json 已写入，两路查询、筛选和评分项都能回溯到当前需求版本；台账里的人都在 exclude_candidate_refs 里。
+完成标准：iteration-N.json 已写入，两路查询、筛选和评分项都能回溯到当前需求版本。
 
 ### 8. 编译本轮搜索工作流
 
@@ -197,21 +196,19 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 **播报**（执行前，必须预告）：本轮用哪几组关键词、预计几分钟、期间不会有新消息。例："第 2 轮开始，这轮用「AI Agent + LangGraph」和「AI Agent + RAG」两组词检索，预计 3–5 分钟，期间不会有新消息。"
 
-然后调用一次 browser_run_workflow(task_id, workflow_ref)。整轮的搜索、筛选、抽卡、硬筛和详情采集都在这一次调用里由工作流完成。
+执行 browser_run_workflow 读取两路卡片；按 `references/seen-and-expand.md` 对照台账挑出未看的人，再编译并执行 collect 采集所选详情。每轮仍最多主路径 5 人、第二路 3 人，两路不重复。
 
 ### 10. 读取结果
 
-先检查运行结果的 status、error_code、summary.metrics、summary.sections 和显式业务 summary。对 success 或 partial 结果，用 browser_read_workflow_result 读 details.primary，有第二路再读 details.secondary，每批最多 10 条；返回 `next_offset` 时用它继续读取，直到两路详情读完。不要因为已得到首批结果而重复从 offset 0 读取。partial 或任一路径 search.*.unsupported_filters 非空时再读 search。需要解释其他失败时再读 candidates 和 failures；空值按信息缺失处理，不用临时脚本强制转换。
+检查 status、error_code、summary.metrics、summary.sections 和业务 summary。对 success 或 partial 结果，运行 `scripts/score_inputs.py --task-id TASK_ID --result-ref RESULT_REF --task-work-dir "/ABSOLUTE/TASK_WORK_DIR"`（脚本路径以当前 Skill 目录为根）。脚本从 Result Store 写出单人详情文件，只返回索引；主 Agent 用索引追加已看台账（见 `references/seen-and-expand.md`），详情留给评分子 Agent 读取。partial 或 unsupported_filters 非空时再用 browser_read_workflow_result 读 search，解释失败时按需读 failures。
 
-读完立刻把 details 和 failures 里的每个人追加进已看台账 `<TASK_WORK_DIR>/wts/seen.json`（格式见 `references/seen-and-expand.md`）。
-
-完成标准：两路 details 全部读完；partial 时已知道哪个站内筛选条件降级；台账已追加本轮打开的人。
+完成标准：全部详情与失败记录已进入索引和台账；partial 时已查明筛选降级原因。
 
 **播报**：两组词各看到多少人、多少人进入详情、多少人通过硬性条件、几位是已看过而跳过的；站内筛选降级时在同一段里用一句白话说明哪个条件没能在页面上生效、后面会用简历内容补筛。
 
 ### 11. 隔离评分
 
-仅对详情硬筛状态为 matched 或 unknown、且当前需求版本下尚未评分的候选人评分，跨轮按 candidate_ref 去重（以已看台账和最近 decision_basis 为准）。按 `references/scoring.md` 逐人评分，各人互相独立。先复用最近 `decision_basis` 中已经完成的评分，只补本轮新人；需求变更、新详情证据或明确的事实/计算错误才允许重评，并记录 correction_reason。沿用旧评分时把上一轮 candidate_scores 的条目**逐字复制**（含 evidence_summary、unknown、detail_ref），不润色、不缩写、不重排字段；Builder 提示某条被视为修订时，恢复原文再编译，这个过程不向用户播报。Builder 确定性计算总分、计数和 Top 10，退出榜单的历史评分继续保留。评完后把高分候选人的当前与过往公司按步骤 3.5 的规则加入目标公司池。
+仅对详情硬筛状态为 matched 或 unknown、且当前需求版本下尚未评分的候选人评分，跨轮按 candidate_ref 去重（以已看台账和最近 decision_basis 为准）。按 `references/scoring.md` 用宿主 task 为每人创建独立评分子 Agent，在宿主允许范围内并行；只传当前已确认需求、评分规则和该人的详情文件。主 Agent 汇总返回的评分条目。先复用最近 `decision_basis` 中已经完成的评分，只补本轮新人；需求变更、新详情证据或明确的事实/计算错误才允许重评，并记录 correction_reason。沿用旧评分时把上一轮 candidate_scores 的条目**逐字复制**（含 evidence_summary、unknown、detail_ref），不润色、不缩写、不重排字段；Builder 提示某条被视为修订时，恢复原文再编译，这个过程不向用户播报。Builder 确定性计算总分、计数和 Top 10，退出榜单的历史评分继续保留。评完后仅按需读取高分候选人的公司及 PRF 证据字段，按步骤 3.5 更新目标公司池。
 
 完成标准：本轮每位 matched/unknown 候选人都有评分记录；Top 10 与目标公司池已更新。
 
@@ -219,7 +216,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 ### 11.5 轮内扩张（可选，可重复）
 
-每轮的详情数量固定不变；扩张是评分之后的加餐。按 `references/scoring.md` 的**扩张门**判断本轮新人的质量：达标就留在本轮，从达标那条查询的首屏卡片里再挑一批人打开，而不是进下一轮；不达标直接进步骤 12。
+常规详情上限不变；扩张在评分之后进行。按 `references/scoring.md` 的**扩张门**判断本轮新人的质量：达标就留在本轮，从达标那条查询的首屏卡片里再挑一批人打开，而不是进下一轮；不达标直接进步骤 12。
 
 具体挑谁、挑几个由 Agent 根据规则初筛后的卡片信息自己判断，不规定数量；建议和文件契约见 `references/seen-and-expand.md`：不全开，挑认为比较可能的，优先和本轮高分候选人长得像的；已看台账里的人和卡片硬筛 rejected 的人不挑。写 `iteration-N-expand-K.json`，编译：
 
@@ -229,7 +226,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" expand --tas
 
 **播报**（执行前）："这轮开出来的人质量不错，我再从这一页挑 N 位打开看看，预计 X 分钟，期间不会有新消息。"
 
-执行一次 browser_run_workflow，按步骤 10 读 `details.expand` 并追加台账，按步骤 11 只评新人（`detail_section` 写 `details.expand`，`scored_iteration` 写 N），播报本次扩张看了几人、新增几位可推荐。评完再判断一次扩张门：仍达标且本页还有值得挑的人，可以再扩（K+1），同一轮最多 3 次；否则进步骤 12。扩张不计入轮次，扩张评出的人和常规轮的人一起进下一轮的 decision_basis。
+执行一次 browser_run_workflow，按步骤 10 导出 `details.expand` 的单人文件并追加台账，按步骤 11 只评新人（`detail_section` 写 `details.expand`，`scored_iteration` 写 N），播报本次扩张看了几人、新增几位可推荐。评完再判断一次扩张门：仍达标且本页还有值得挑的人，可以再扩（K+1），同一轮最多 3 次；否则进步骤 12。扩张不计入轮次，扩张评出的人和常规轮的人一起进下一轮的 decision_basis。
 
 完成标准：每次扩张都有计划文件、运行结果、台账追加和评分记录；挑人依据在决策记录里。
 

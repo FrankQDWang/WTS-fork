@@ -16,7 +16,7 @@ NEGATIVE_TEXT_FIELDS = EXPERIENCE_FIELDS | {
 }
 SCORE_FIELDS = {
     "candidate_ref", "detail_ref", "detail_section", "scored_iteration", "matches",
-    "must_score", "nice_score", "risk_score", "unknown", "evidence_summary", "correction_reason",
+    "must_score", "nice_score", "risk_score", "must_unknown", "unknown", "evidence_summary", "correction_reason",
 }
 # details.expand holds candidates opened by an in-round expansion (build_workflow.py expand).
 DETAIL_SECTIONS = {"details.primary", "details.secondary", "details.expand"}
@@ -145,6 +145,10 @@ def decision_receipt(plan: dict, *, iteration: int, task_id: str, store_root: Pa
             raise ValueError("unknown 必须是最多 20 条的文本数组")
         for item in unknown:
             text(item, "unknown 条目", 200)
+        if type(row.get("must_unknown")) is not bool:
+            raise ValueError("must_unknown 必须是 boolean，表示必须满足项是否仍有未核实内容")
+        if row["must_unknown"] and not unknown:
+            raise ValueError("must_unknown 为 true 时须在 unknown 列出未核实的必须满足项")
         text(row.get("evidence_summary"), "evidence_summary")
         old = old_scores.get(ref)
         changed = old and any(old.get(key) != row.get(key) for key in SCORE_FIELDS - {"correction_reason"})
@@ -165,7 +169,7 @@ def decision_receipt(plan: dict, *, iteration: int, task_id: str, store_root: Pa
             "nice": row.get("nice_score"), "risk": row.get("risk_score"),
             "matches": row["matches"], "scored_iteration": scored_iteration,
             "recommendable": row["matches"] and total >= 60,
-            "strong": row["matches"] and total >= 80 and must >= 70 and
+            "strong": row["matches"] and not row["must_unknown"] and total >= 80 and must >= 70 and
                       (row.get("risk_score") is None or row["risk_score"] <= 30),
         }
     if set(old_scores) - set(scores):

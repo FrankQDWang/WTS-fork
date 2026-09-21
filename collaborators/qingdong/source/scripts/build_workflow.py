@@ -18,7 +18,7 @@ from decision_basis import decision_receipt
 
 
 SKILL_NAME = "wts"
-SKILL_VERSION = "0.6.0"
+SKILL_VERSION = "0.6.1"
 WORKFLOW_SCHEMA = "browser.workflow.v1"
 SCHEMA_VERSION = 2
 MAX_SEARCH_ITERATION = 3
@@ -28,10 +28,9 @@ MAX_CARDS_PER_PATH = 30
 MAX_PROBE_COMPANIES = 3
 PROBE_ITERATION = 1
 PROBE_RECALL_THRESHOLD = 10
-# 轮内扩张：同一轮最多扩张几次、一次最多开多少份详情、搜索计划最多排除多少已看过的人。
+# 轮内扩张：同一轮最多扩张几次、一次最多开多少份详情。
 MAX_EXPANSIONS_PER_ITERATION = 3
 MAX_EXPAND_DETAILS = MAX_CARDS_PER_PATH
-MAX_EXCLUDED_REFS = 500
 EXPAND_PATH_NAME = "expand"
 MAX_PLAN_BYTES = 256 * 1024
 TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
@@ -119,7 +118,6 @@ ALLOWED_PLAN_KEYS = {
     "limits",
     "action_delay_ms",
     "decision_basis",
-    "exclude_candidate_refs",
 }
 ALLOWED_PROBE_PLAN_KEYS = {"anchor", "companies", "site_filters", "action_delay_ms"}
 ALLOWED_EXPAND_PLAN_KEYS = {
@@ -512,11 +510,6 @@ def read_plan(plan_path: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
     unknown_keys = sorted(set(plan) - ALLOWED_PLAN_KEYS)
     if unknown_keys:
         raise ValueError(f"搜索计划包含未知字段: {', '.join(unknown_keys)}")
-    plan["exclude_candidate_refs"] = normalize_candidate_refs(
-        plan.get("exclude_candidate_refs"),
-        "exclude_candidate_refs",
-        maximum=MAX_EXCLUDED_REFS,
-    )
     basis = plan.get("decision_basis")
     version = plan.get(
         "requirement_version",
@@ -855,33 +848,16 @@ def text_actual(paths: list[str]) -> dict[str, Any]:
     return {"paths": paths, "join": " ", "normalize": ["trim", "lowercase"]}
 
 
-def candidate_ref_predicate(refs: list[str], mode: str) -> dict[str, Any]:
-    """Card-phase predicate on candidate_ref.
-
-    mode="exclude": reject cards already opened in earlier rounds (seen ledger), so the
-    fixed detail budget lands on people not seen before. Relies on the host operator
-    ``text.excludes_all`` (passes when the value contains none of the expected strings).
-    mode="include": keep only the cards the Agent chose for an in-round expansion.
-    """
-    if mode == "exclude":
-        return {
-            "id": "already_seen",
-            "actual": {"path": "candidate_ref"},
-            "operator": "text.excludes_all",
-            "expected": refs,
-            "on_missing": "unknown",
-            "on_mismatch": "reject",
-        }
-    if mode == "include":
-        return {
-            "id": "selected_for_expansion",
-            "actual": {"path": "candidate_ref"},
-            "operator": "text.includes_any",
-            "expected": refs,
-            "on_missing": "reject",
-            "on_mismatch": "reject",
-        }
-    raise ValueError(f"未知的 candidate_ref 谓词模式: {mode}")
+def candidate_ref_predicate(refs: list[str]) -> dict[str, Any]:
+    """Use the host's supported positive selection operator."""
+    return {
+        "id": "selected_candidate",
+        "actual": {"path": "candidate_ref"},
+        "operator": "text.includes_any",
+        "expected": refs,
+        "on_missing": "reject",
+        "on_mismatch": "reject",
+    }
 
 
 def compile_predicates(filters: dict[str, Any], phase: str) -> list[dict[str, Any]]:
@@ -1367,18 +1343,20 @@ def build_preflight(args: argparse.Namespace, assets: dict[str, Any]) -> dict[st
     return workflow
 
 
-def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
-    plan, warnings = read_plan(args.plan_file)
-    previous_plan = executed_plan(args, args.iteration - 1) if args.iteration > 1 else None
-    if previous_plan and not plan.get("decision_basis"):
-        raise ValueError("第 2 轮起必须填写 decision_basis，不能删除它来跳过条件与历史评分校验")
-    args.decision_receipt = decision_receipt(
-        plan,
-        iteration=args.iteration,
-        task_id=args.task_id,
-        store_root=Path(args.store_root).expanduser().resolve(),
-        previous_plan=previous_plan,
-    )
+def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
+                 selection: dict[str, list[str]] | None = None,
+                 source_plan: dict[str, Any] | None = None) -> dict[str, Any]:
+    if source_plan is None:
+        plan, warnings = read_plan(args.plan_file)
+        previous_plan = executed_plan(args, args.iteration - 1) if args.iteration > 1 else None
+        if previous_plan and not plan.get("decision_basis"):
+            raise ValueError("第 2 轮起必须填写 decision_basis，不能删除它来跳过条件与历史评分校验")
+        args.decision_receipt = decision_receipt(
+            plan, iteration=args.iteration, task_id=args.task_id,
+            store_root=Path(args.store_root).expanduser().resolve(), previous_plan=previous_plan,
+        )
+    else:
+        plan, warnings = copy.deepcopy(source_plan), []
     if args.iteration == 1 and plan.get("secondary_query"):
         raise ValueError("第 1 轮不能设置 secondary_query")
     channel = assets["channel"]
@@ -1399,18 +1377,13 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
     hard_site_filter_fields = sorted(site_filter_fields & set(hard_filters))
     site_filter_program = compile_site_filter_program(plan, channel, action_delay_ms)
     card_predicates = compile_predicates(hard_filters, "card")
-    excluded_refs = plan.get("exclude_candidate_refs") or []
-    if excluded_refs:
-        # Seen-ledger: cards opened in earlier rounds (or an earlier task in the same
-        # conversation) are rejected before the detail budget is spent.
-        card_predicates.append(candidate_ref_predicate(excluded_refs, "exclude"))
     detail_predicates = compile_predicates(hard_filters, "detail")
     paths = [
         {
             "name": "primary",
             "query": plan["primary_query"],
             "max_cards": limits["max_cards_per_path"],
-            "max_details": limits["primary_max_details"],
+            "max_details": len(selection.get("primary", [])) if selection is not None else 0,
         }
     ]
     if plan.get("secondary_query"):
@@ -1419,11 +1392,13 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
                 "name": "secondary",
                 "query": plan["secondary_query"],
                 "max_cards": limits["max_cards_per_path"],
-                "max_details": limits["secondary_max_details"],
+                "max_details": len(selection.get("secondary", [])) if selection is not None else 0,
             }
         )
     steps: list[dict[str, Any]] = []
     for path in paths:
+        if selection is not None and not selection[path["name"]]:
+            continue
         steps.extend(
             compile_path_steps(
                 path_name=path["name"],
@@ -1432,7 +1407,10 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
                 max_details=path["max_details"],
                 action_delay_ms=action_delay_ms,
                 site_filter_program=site_filter_program,
-                card_predicates=card_predicates,
+                card_predicates=card_predicates + (
+                    [candidate_ref_predicate(selection[path["name"]])]
+                    if selection is not None and selection[path["name"]] else []
+                ),
                 detail_predicates=detail_predicates,
                 assets=assets,
                 plan=plan,
@@ -1464,7 +1442,8 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
         "hard_filter_fields": sorted(hard_filters.keys()),
         "semantic_criteria": plan["semantic_criteria"],
         "limits": limits,
-        "excluded_candidate_refs": len(excluded_refs),
+        "stage": "details" if selection is not None else "cards",
+        "selection": selection,
         "site_filter_failure_policy": {
             "continue_and_report": sorted(site_filter_fields),
             "hard_filter_fallback": hard_site_filter_fields,
@@ -1476,6 +1455,65 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
     workflow["input_plan"] = copy.deepcopy(plan)
     workflow["steps"] = steps
     validate_workflow(workflow)
+    return workflow
+
+
+def build_collect(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
+    """Open only the Agent's choices from a completed, integrity-checked card result."""
+    selection = load_plan_object(args.plan_file, "详情名单", max_bytes=MAX_PLAN_BYTES)
+    if set(selection) - {"result_ref", "primary", "secondary"}:
+        raise ValueError("详情名单只接受 result_ref、primary、secondary")
+    match = re.fullmatch(r"result://([A-Za-z0-9._-]{1,100})/([a-f0-9]{64})",
+                         str(selection.get("result_ref", "")))
+    if not match or match[1] != args.task_id:
+        raise ValueError("result_ref 必须来自当前任务的卡片结果")
+    root = Path(args.store_root).expanduser().resolve()
+    path = (root / "result-store" / args.task_id / f"{match[2]}.json").resolve()
+    if not path.is_relative_to(root) or not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
+        raise ValueError("卡片结果不存在、越界或过大")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != match[2]:
+        raise ValueError("卡片结果摘要不匹配")
+    result = json.loads(raw)
+    if result.get("status") not in {"success", "partial"} or result.get("workflow", {}).get("task_id") != args.task_id:
+        raise ValueError("只能从当前任务已完成的卡片结果挑人")
+    source = None
+    for file in (root / "workflow-store" / args.task_id).glob("*.json"):
+        if not file.resolve().is_relative_to(root) or file.stat().st_size > 256 * 1024:
+            raise ValueError("卡片工作流越界或过大")
+        workflow = load_json(file)
+        if workflow.get("workflow_id") != result.get("workflow", {}).get("workflow_id"):
+            continue
+        integrity = workflow.pop("integrity", {})
+        digest = hashlib.sha256(canonical_bytes(workflow)).hexdigest()
+        if digest != file.stem or integrity.get("digest") != digest:
+            raise ValueError("卡片工作流摘要不匹配")
+        source = workflow
+        break
+    if (not source or source.get("task_id") != args.task_id or source.get("iteration") != args.iteration
+            or source.get("input_summary", {}).get("stage") != "cards"):
+        raise ValueError("result_ref 必须对应本轮 search 的卡片结果")
+    plan = source["input_plan"]
+    names = ["primary"] + (["secondary"] if plan.get("secondary_query") else [])
+    if set(selection) != {"result_ref", *names}:
+        raise ValueError("详情名单须填写本轮每条路径的数组，无人可选时写 []")
+    selected, used = {}, set()
+    for name in names:
+        refs = normalize_candidate_refs(selection[name], name, maximum=plan["limits"][f"{name}_max_details"])
+        cards = result.get("data", {}).get("candidates", {}).get(name, [])
+        eligible = {row.get("candidate_ref") for row in cards
+                    if row.get("card_hard_filter_status") in {"matched", "unknown"}}
+        if set(refs) - eligible:
+            raise ValueError(f"{name} 只能选择该路卡片结果中 matched/unknown 的候选人")
+        if used.intersection(refs):
+            raise ValueError("两路详情名单不能重复选人")
+        used.update(refs)
+        selected[name] = refs
+    # Preserve the confirmed interaction mode as well as the original query/filters.
+    collect_args = copy.copy(args)
+    collect_args.interaction_mode = source["interaction_mode"]
+    workflow = build_search(collect_args, assets, selection=selected, source_plan=plan)
+    workflow["input_summary"]["card_result_ref"] = selection["result_ref"]
     return workflow
 
 
@@ -1513,7 +1551,7 @@ def build_expand(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
     }
     site_filter_program = compile_site_filter_program(plan, channel, action_delay_ms)
     card_predicates = compile_predicates(hard_filters, "card")
-    card_predicates.append(candidate_ref_predicate(plan["include_candidate_refs"], "include"))
+    card_predicates.append(candidate_ref_predicate(plan["include_candidate_refs"]))
     detail_predicates = compile_predicates(hard_filters, "detail")
     max_details = len(plan["include_candidate_refs"])
     paths = [
@@ -1590,15 +1628,20 @@ def executed_plan(args: argparse.Namespace, iteration: int) -> dict[str, Any]:
     plan; they are skipped so the next round validates against the real search plan."""
     root = Path(args.store_root).expanduser().resolve()
     workflows: dict[str, dict[str, Any]] = {}
+    cards_only = False
     for path in (root / "workflow-store" / args.task_id).glob("*.json"):
         if not path.resolve().is_relative_to(root) or path.stat().st_size > 256 * 1024:
             raise ValueError("历史工作流越界或超过大小限制")
         workflow = load_json(path)
+        if (workflow.get("task_id") == args.task_id and workflow.get("iteration") == iteration
+                and workflow.get("input_summary", {}).get("stage") == "cards"):
+            cards_only = True
         if (
             workflow.get("task_id") != args.task_id
             or workflow.get("iteration") != iteration
             or (workflow.get("skill") or {}).get("name") != SKILL_NAME
             or workflow.get("expansion")
+            or workflow.get("input_summary", {}).get("stage") == "cards"
         ):
             continue
         integrity = workflow.pop("integrity", {})
@@ -1608,6 +1651,8 @@ def executed_plan(args: argparse.Namespace, iteration: int) -> dict[str, Any]:
         if isinstance(workflow.get("input_plan"), dict):
             workflows[workflow["workflow_id"]] = workflow["input_plan"]
     if not workflows:
+        if cards_only:
+            raise ValueError("本轮只有卡片结果；先执行 collect，再评分或结算")
         # Compatibility for workflows compiled before input_plan was recorded.
         return read_plan(str(expected_search_plan_path(Path(args.task_work_dir), iteration)))[0]
 
@@ -1787,10 +1832,10 @@ def settle_search(args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="WTS：preflight 登录前置；probe 公司探测；search 编译搜索；expand 轮内扩张；settle 结算最后已完成轮次",
+        description="WTS：preflight 登录前置；probe 公司探测；search 读取卡片；collect 采集所选详情；expand 轮内扩张；settle 结算最后已完成轮次",
         epilog="没有 reflect 子命令。settle --iteration N 使用最后已完成轮次 N，不是 N+1。expand 附属于当前轮，不新增轮次。",
     )
-    parser.add_argument("workflow_type", choices=["preflight", "probe", "search", "expand", "settle"])
+    parser.add_argument("workflow_type", choices=["preflight", "probe", "search", "collect", "expand", "settle"])
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--iteration", type=int, default=0)
     parser.add_argument(
@@ -1816,7 +1861,7 @@ def parse_args() -> argparse.Namespace:
         parser.error("--iteration 必须在 0-100 之间")
     if args.workflow_type == "preflight" and args.iteration != 0:
         parser.error("preflight 的 --iteration 必须为 0")
-    if args.workflow_type in {"search", "expand", "settle"} and not 1 <= args.iteration <= MAX_SEARCH_ITERATION:
+    if args.workflow_type in {"search", "collect", "expand", "settle"} and not 1 <= args.iteration <= MAX_SEARCH_ITERATION:
         parser.error(
             f"{args.workflow_type} 的 --iteration 仅支持 1-{MAX_SEARCH_ITERATION}；settle 填最后已完成轮次"
         )
@@ -1844,12 +1889,14 @@ def parse_args() -> argparse.Namespace:
 
     args.task_work_dir = str(task_work_dir)
     args.store_root = str(store_root)
-    if args.workflow_type in {"search", "probe", "expand"} and not args.plan_file:
+    if args.workflow_type in {"search", "collect", "probe", "expand"} and not args.plan_file:
         parser.error(f"{args.workflow_type} 工作流必须提供 --plan-file")
-    if args.workflow_type in {"search", "probe", "expand"}:
+    if args.workflow_type in {"search", "collect", "probe", "expand"}:
         plan_path = Path(args.plan_file).expanduser().resolve()
         if args.workflow_type == "search":
             expected_plan = expected_search_plan_path(task_work_dir, args.iteration)
+        elif args.workflow_type == "collect":
+            expected_plan = (task_work_dir / SKILL_NAME / "search-plans" / f"iteration-{args.iteration}-collect.json").resolve()
         elif args.workflow_type == "expand":
             expected_plan = expected_expand_plan_path(task_work_dir, args.iteration, args.expansion)
         else:
@@ -1879,6 +1926,7 @@ def main() -> None:
     builders = {
         "preflight": build_preflight,
         "search": build_search,
+        "collect": build_collect,
         "probe": build_probe,
         "expand": build_expand,
     }

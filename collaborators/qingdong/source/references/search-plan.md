@@ -26,10 +26,9 @@
 | `limits.max_cards_per_path` | integer | 1-30，默认 30；每路首屏最多抽取的卡片数 |
 | `limits.primary_max_details` | integer | 0-5，默认 5 |
 | `limits.secondary_max_details` | integer | 0-3，默认 3；没有第二路时视为 0 |
-| `exclude_candidate_refs` | string[] | 可选，最多 500 个；已看台账（`references/seen-and-expand.md`）里全部 candidate_ref。Builder 编译为卡片阶段谓词 `already_seen`：命中即 reject，不占详情预算。第 2 轮起和上一次寻访延续时必填 |
 | `action_delay_ms` | integer | 800-5000，默认 1200；作为普通操作延迟基准，Builder 生成 ±20% 的浮动值，不由 Agent 逐步等待 |
 
-每路固定只采首屏。同一轮两路之间不去重：第二路可能重开主路径刚开过的人，这种重复由步骤 11 的评分去重吸收。
+每路固定只采首屏。search 返回卡片后，Agent 按已看台账和两路名单去重，再调用 collect。
 
 Builder 把每份详情的 15 秒预算分配到读取列表位置、点击打开、提取详情之前，三段各约 4–6 秒、合计恰好 15 秒；每个候选人分别生成分配，不作为 SearchPlan 可调字段。普通点击原有固定尾延迟被浮动前置等待替代，输入、内容读取和导航后也等待。验证码检测和页面加载轮询不增加延迟。弹窗捕获预算包含前置等待及列表页恢复时间；详情加载和搜索超时保持原值。
 
@@ -39,7 +38,7 @@ Builder 把每份详情的 15 秒预算分配到读取列表位置、点击打�
 - `nice_to_have`：加分项，最多 20 条
 - `exclude_signals`：排除信号，最多 20 条
 
-`decision_basis` 的字段与示例以 Builder 校验为准：`requirement_version`、`completed_iteration`、`candidate_scores`、`prf_decision`、`next_action`。同一需求版本的 `hard_filters` 与 `semantic_criteria` 必须保持一致；只换关键词不能同步改写条件。每条候选人评分保留 candidate_ref、真实 detail_ref、详情分区、首次评分轮次、三维原始分、matches、unknown 和证据说明。纠错或需求版本变化时写 correction_reason，但不改首次评分轮次，也不删除历史候选人。
+`decision_basis` 的字段与示例以 Builder 校验为准：`requirement_version`、`completed_iteration`、`candidate_scores`、`prf_decision`、`next_action`。同一需求版本的 `hard_filters` 与 `semantic_criteria` 必须保持一致；只换关键词不能同步改写条件。每条候选人评分保留 candidate_ref、真实 detail_ref、详情分区、首次评分轮次、三维原始分、matches、must_unknown、unknown 和证据说明。纠错或需求版本变化时写 correction_reason，但不改首次评分轮次，也不删除历史候选人。
 
 Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`。下一轮及 settle 从已完成工作流恢复真实执行计划；旧 iteration 文件即使被修改，也不作为绕过一致性校验的依据。
 
@@ -74,7 +73,7 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 - `required_keywords.any`: 至少命中一个的关键词数组。
 - `required_keyword_groups`: 二维字符串数组。组与组之间是 AND，每组内部是 OR。
 
-编译后的顺序固定为：对每一路执行关键词搜索并应用站内筛选，抽取该路首屏最多 30 张卡片，使用卡片已知字段做硬性预筛，只为 `matched` 和 `unknown` 候选人按该路详情预算采集详情，再使用详情字段做硬性终筛。第 2 轮起若有第二路，同一份工作流会接着跑完第二路。所有步骤由一次 `browser_run_workflow` 在模型外连续执行。
+search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详情；collect 只采集 Agent 选定的人，再做详情硬筛。两次执行同属一轮，评分与 Controller 仍各做一次。
 
 卡片上能够明确读到的城市、学历、工作年限等字段可以直接淘汰不符合者。列表摘要没有出现关键词、院校标签或其他可能被页面折叠的信息时只记为 `unknown`，不得提前淘汰。Builder 为卡片和详情分别生成声明式谓词；通用浏览器不理解招聘字段。
 
@@ -103,6 +102,20 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 }
 ```
 
+## 常规详情名单
+
+路径：`<TASK_WORK_DIR>/wts/search-plans/iteration-N-collect.json`，命令为 `collect --iteration N`。只填以下字段，不重写搜索条件：
+
+```json
+{
+  "result_ref": "result://TASK_ID/<本轮卡片结果摘要>",
+  "primary": ["liepin:a1b2c3d4e5"],
+  "secondary": []
+}
+```
+
+第 1 轮及没有第二路时省略 secondary；本轮存在的路径必须填写，无人可选写 []。主路径最多 5 人、第二路最多 3 人，且不超过本轮计划上限；只选相应卡片结果中 matched/unknown 的编号，两路不重复。Builder 从结果恢复原计划，拒绝越界名单。collect 返回 `details.primary/secondary` 和 `failures.primary/secondary`；评分的 detail_ref 引用这次结果。
+
 ## 扩张计划
 
 轮内扩张（SKILL.md 步骤 11.5）在本轮评分达到扩张门之后执行，只重开本轮某一条查询首屏上 Agent 点名的卡片。计划文件固定为：
@@ -123,7 +136,7 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 | `semantic_criteria` | object | 照抄本轮计划；与已执行计划不一致即拒绝编译 |
 | `action_delay_ms` | integer | 同搜索计划 |
 
-没有 `secondary_query`、`limits`、`decision_basis`、`exclude_candidate_refs`。Builder 从 Workflow Store 找回本轮真实执行的计划做一致性校验，本轮没有已完成结果时拒绝编译。扩张工作流的 `iteration` 仍是 N，但带 `expansion=K` 标记，下一轮和 settle 找回本轮计划时会跳过它。
+没有 `secondary_query`、`limits`、`decision_basis`。Builder 从 Workflow Store 找回本轮真实执行的计划做一致性校验，本轮没有已完成结果时拒绝编译。扩张工作流的 `iteration` 仍是 N，但带 `expansion=K` 标记，下一轮和 settle 找回本轮计划时会跳过它。
 
 ```json
 {
