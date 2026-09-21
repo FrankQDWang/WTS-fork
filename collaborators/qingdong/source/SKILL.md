@@ -220,7 +220,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 每轮的详情数量固定不变；扩张是评分之后的加餐。按 `references/scoring.md` 的**扩张门**判断本轮新人的质量：达标就留在本轮，从达标那条查询的首屏卡片里再挑一批人打开，而不是进下一轮；不达标直接进步骤 12。
 
-具体挑谁、挑几个由 Agent 决定，规则和文件契约见 `references/seen-and-expand.md`：不全开，一次 5–10 人，优先卡片硬筛 matched、且和本轮高分候选人长得像的；已看台账里的人不挑。写 `iteration-N-expand-K.json`，编译：
+具体挑谁、挑几个由 Agent 根据规则初筛后的卡片信息自己判断，不规定数量；建议和文件契约见 `references/seen-and-expand.md`：不全开，挑认为比较可能的，优先和本轮高分候选人长得像的；已看台账里的人和卡片硬筛 rejected 的人不挑。写 `iteration-N-expand-K.json`，编译：
 
 ```
 python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" expand --task-id TASK_ID --iteration N --expansion K --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N-expand-K.json"

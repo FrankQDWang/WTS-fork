@@ -10,7 +10,7 @@
 
 - **已看台账 `wts/seen.json`**（新 `references/seen-and-expand.md`）：步骤 10 读完结果后把 details 和 failures 里的每个人追加进台账；它是"详情已打开"的唯一事实来源。步骤 15 把台账路径写进 `report.json.seen_ledger_path`；步骤 1 在用户选了备选方向发起新任务时合并上一次的台账。
 - **搜索计划新增 `exclude_candidate_refs`**（`references/search-plan.md`、`build_workflow.py`）：台账里的 candidate_ref 全部写入，Builder 编译为卡片阶段谓词 `already_seen`，命中即 reject，不占详情预算。这样每轮固定的 5 份和 3 份详情自然落到没看过的人身上。第 2 轮起必填。
-- **轮内扩张（新步骤 11.5，新 Builder 子命令 `expand`）**：每轮详情数量不变；本轮评分后若达到**扩张门**（`references/scoring.md`：本轮新人可推荐占比 ≥ 50% 或新增强匹配 ≥ 2，且未成强池），就留在本轮从同一页再挑一批人打开，而不是进下一轮。挑谁、挑几个由 Agent 决定（不全开，一次 5–10 人，优先卡片硬筛 matched 且与本轮高分候选人相似的），写 `iteration-N-expand-K.json`，字段 `query` + `include_candidate_refs` + 照抄本轮的筛选和评分项。Builder 编译为卡片谓词 `selected_for_expansion`（只保留名单内的卡片，详情预算 = 名单长度），并校验 query 必须是本轮已执行的查询之一、hard_filters / semantic_criteria 与已执行计划一致。同一轮最多 3 次，扩张不计入轮次。
+- **轮内扩张（新步骤 11.5，新 Builder 子命令 `expand`）**：每轮详情数量不变；本轮评分后若达到**扩张门**（`references/scoring.md`：本轮新人可推荐占比 ≥ 50% 或新增强匹配 ≥ 2，且未成强池），就留在本轮从同一页再挑一批人打开，而不是进下一轮。挑谁、挑几个由 Agent 根据规则初筛后的卡片信息自行判断，不规定数量（建议：不全开，挑认为比较可能的，优先与本轮高分候选人相似的；Builder 只设一次最多 30 人的技术上限），写 `iteration-N-expand-K.json`，字段 `query` + `include_candidate_refs` + 照抄本轮的筛选和评分项。Builder 编译为卡片谓词 `selected_for_expansion`（只保留名单内的卡片，详情预算 = 名单长度），并校验 query 必须是本轮已执行的查询之一、hard_filters / semantic_criteria 与已执行计划一致。同一轮最多 3 次，扩张不计入轮次。
 - **结果分区新增 `details.expand`**；`decision_basis.py` 的 `detail_section` 放开为 primary / secondary / expand，`candidate_scores` 上限从 25 提到 120（三轮加扩张会超过 25），计划文件和最终评分快照上限从 64 KiB 提到 256 KiB。
 - **`executed_plan` 跳过扩张工作流**：扩张工作流带 `expansion=K` 标记，下一轮和 settle 找回本轮计划时忽略它，避免把扩张计划当成本轮搜索计划。
 - **终态报告**（`references/final-report.md`）：`coverage` 新增 `expansions` 和 `skipped_seen`；新增 `not_recommended`（看过但没推荐的人数与原因聚合），用户视图只说数量和原因，不列个人。
