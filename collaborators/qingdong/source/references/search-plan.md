@@ -1,6 +1,13 @@
 # 搜索计划契约
 
-仅在生成或调整猎聘搜索计划时读取本文件。计划文件是 Agent 与 Skill Builder 之间的领域输入，不是浏览器命令。Builder 会拒绝未知字段，并把计划与 Skill 内的渠道资产编译为 `browser.workflow.v1`。
+按当前步骤读对应的节：
+
+- 写 `iteration-N.json`（步骤 7）：字段、站内筛选、硬性过滤，对照文末示例。
+- 步骤 6.5：探测计划。
+- collect（步骤 9）：常规详情名单。
+- 步骤 11.5：扩张计划。步骤 10：结果分区。
+
+计划文件是 Agent 与 Skill Builder 之间的领域输入，不是浏览器命令。Builder 会拒绝未知字段，并把计划与 Skill 内的渠道资产编译为 `browser.workflow.v1`。
 
 搜索计划轮次允许 1-3。第一轮必须直接创建 `iteration-1.json`，后续轮次依次使用 `iteration-2.json`、`iteration-3.json`。第 N 轮计划的唯一合法路径是：
 
@@ -30,8 +37,6 @@
 
 每路固定只采首屏。search 返回卡片后，Agent 按已看台账和两路名单去重，再调用 collect。
 
-Builder 把每份详情的 15 秒预算分配到读取列表位置、点击打开、提取详情之前，三段各约 4–6 秒、合计恰好 15 秒；每个候选人分别生成分配，不作为 SearchPlan 可调字段。普通点击原有固定尾延迟被浮动前置等待替代，输入、内容读取和导航后也等待。验证码检测和页面加载轮询不增加延迟。弹窗捕获预算包含前置等待及列表页恢复时间；详情加载和搜索超时保持原值。
-
 `semantic_criteria` 只接受：
 
 - `must_have`：必须满足，最多 20 条
@@ -48,7 +53,12 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 
 - `current_cities`、`expected_cities`: 最多 9 个城市名称或标准编码。
 - `experience_years`: 仅支持 `{min:0,max:0}`、`{min:1,max:3}`、`{min:3,max:5}`、`{min:5,max:10}`、`{min:10,max:null}`。
-- `education`: 最多一个值，支持本科、硕士、博士/博士后、大专、中专/中技、高中及以下。
+- `education`: 猎聘每个选项只含这一档。确认稿里的学历是下限，站内和硬筛分开写：
+  - 下限是高中及以下、中专/中技、大专或本科：`site_filters` 省略 education，页面留在不限。`hard_filters.education` 写下限及其以上每一档。本科时为 `["本科", "硕士", "博士/博士后"]`；大专时再加大专；更低的下限把该档到博士/博士后都写上。
+  - 下限是硕士：`site_filters.education` 与 `hard_filters.education` 都写 `["硕士", "博士/博士后"]`。页面点「硕士」和「博士/博士后」。
+  - 下限是博士：两边都只写 `["博士/博士后"]`。
+  - 用户写明只要某一档时，两边都只写那一档。
+  - 站内最多两个值。可用值：本科、硕士、博士/博士后、大专、中专/中技、高中及以下。
 - `school_requirements`: 最多一个值，支持 `211`、`985`、`double_first_class`、`overseas`。
 
 策略允许写入但页面没有控件的字段：
@@ -92,13 +102,13 @@ search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详�
 
 没有 `hard_filters`、`semantic_criteria`、`limits`：探测只搜索并抽取首屏卡片（每家最多 30 张），不做硬筛、不采详情。
 
-结果：`summary.workflow` 为 `company_probe`；`summary.paths.company_K` 每家一项 `{company, query, card_count, unsupported_filter_count}`；`search.company_K` 含 `unsupported_filters` 与 `pages`。`summary.recall_threshold` 为 10：`card_count` > 10 可用，≤ 10 不可用。
+结果：`summary.workflow` 为 `company_probe`；`summary.paths.company_K` 每家一项 `{company, query, card_count, unsupported_filter_count}`；`search.company_K` 含 `unsupported_filters` 与 `pages`。`summary.recall_threshold` 为 10：`card_count` 高于该值可用，否则不可用。
 
 ```json
 {
   "anchor": "AI Agent",
   "companies": ["阿里巴巴", "字节跳动"],
-  "site_filters": {"expected_cities": ["上海"], "education": ["本科"]}
+  "site_filters": {"expected_cities": ["上海"]}
 }
 ```
 
@@ -118,7 +128,7 @@ search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详�
 
 ## 扩张计划
 
-轮内扩张（SKILL.md 步骤 11.5）在扩张门达标后执行。第 1 轮先过步骤 11.3，用确认后的 `labels` 判断；第 2 轮起评分后判断。只重开本轮某一条查询首屏上 Agent 点名的卡片。计划文件固定为：
+触发与挑人见 `seen-and-expand.md`。此处只规定字段。计划文件固定为：
 
 ```text
 <TASK_WORK_DIR>/wts/search-plans/iteration-N-expand-K.json
@@ -171,12 +181,11 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 {
   "primary_query": "AI Agent LangGraph RAG 阿里巴巴",
   "site_filters": {
-    "expected_cities": ["上海"],
-    "education": ["本科"]
+    "expected_cities": ["上海"]
   },
   "hard_filters": {
     "expected_cities": ["上海"],
-    "education": ["本科"],
+    "education": ["本科", "硕士", "博士/博士后"],
     "required_keyword_groups": [["AI Agent"], ["LangGraph", "LangChain"]]
   },
   "semantic_criteria": {

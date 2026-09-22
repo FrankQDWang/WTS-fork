@@ -285,7 +285,7 @@ def normalize_plan(plan: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str,
 
     if "education" in site_filters:
         site_filters["education"] = normalize_education_list(
-            site_filters["education"], "site_filters.education", maximum=1
+            site_filters["education"], "site_filters.education", maximum=2
         )
     if "education" in hard_filters:
         hard_filters["education"] = normalize_education_list(
@@ -766,21 +766,23 @@ def compile_site_filter_program(
                 ]
             )
         elif interaction == "inline_option":
-            label = value[0] if isinstance(value, list) else value
-            operations.extend(
-                [
-                    {
-                        "id": f"select-filter-{field}",
-                        "op": "page.click",
-                        "target": {
-                            **locator_within(config["option"], config["row"]),
-                            "text": {"equals": label},
+            labels = value if isinstance(value, list) else [value]
+            for index, label in enumerate(labels):
+                suffix = "" if len(labels) == 1 else f"-{index + 1}"
+                operations.extend(
+                    [
+                        {
+                            "id": f"select-filter-{field}{suffix}",
+                            "op": "page.click",
+                            "target": {
+                                **locator_within(config["option"], config["row"]),
+                                "text": {"equals": label},
+                            },
+                            "after_ms": action_delay_ms,
                         },
-                        "after_ms": action_delay_ms,
-                    },
-                    *stable_waits(field),
-                ]
-            )
+                        *stable_waits(field),
+                    ]
+                )
         elif interaction == "select_dropdown":
             operations.extend(
                 [
@@ -860,6 +862,19 @@ def candidate_ref_predicate(refs: list[str]) -> dict[str, Any]:
     }
 
 
+def education_match_terms(levels: list[str]) -> list[str]:
+    extras = {
+        "博士/博士后": ("博士", "博士后"),
+        "中专/中技": ("中专", "中技"),
+        "高中及以下": ("高中",),
+    }
+    terms: list[str] = []
+    for level in levels:
+        terms.append(level)
+        terms.extend(extras.get(level, ()))
+    return list(dict.fromkeys(terms))
+
+
 def compile_predicates(filters: dict[str, Any], phase: str) -> list[dict[str, Any]]:
     predicates: list[dict[str, Any]] = []
     for filter_field, actual_field in (
@@ -868,6 +883,8 @@ def compile_predicates(filters: dict[str, Any], phase: str) -> list[dict[str, An
         ("education", "education"),
     ):
         expected = filters.get(filter_field) or []
+        if filter_field == "education":
+            expected = education_match_terms(expected)
         if expected:
             predicates.append(
                 {
