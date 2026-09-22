@@ -51,7 +51,7 @@ search 只读卡片，不开详情。Agent 用 browser_read_workflow_result 读�
 python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" collect --task-id TASK_ID --iteration N --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N-collect.json"
 ```
 
-再执行返回的 workflow_ref。collect 沿用原查询和筛选，重新定位列表，只打开名单内的人；列表变化后找不到的人不换人补位。无人可选的路径写 []，全部为空时也执行 collect，作为本轮完成记录。采集完成后按 SKILL.md 步骤 10 运行 `score_inputs.py`，用它返回的索引追加台账，把 `profile_path` 交给评分子 Agent。搜索覆盖从 search 结果统计。
+再执行返回的 workflow_ref。collect 沿用原查询和筛选，重新定位列表，只打开名单内的人；列表变化后找不到的人不换人补位。无人可选的路径写 []，全部为空时也执行 collect，作为本轮完成记录。**补搜**发生在第一次采集之后、评分之前，见 SKILL.md 步骤 9；可采为 0 且将补搜时跳过第一次采集。扩张仍用评分后的 `labels`。采集完成后按 SKILL.md 步骤 10 运行 `score_inputs.py`，用它返回的索引追加台账，把 `profile_path` 交给评分子 Agent。搜索覆盖从 search 结果统计。
 
 `coverage.skipped_seen` 由 Agent 统计本轮卡片中因台账被跳过的不同 candidate_ref 数。去重由 Agent 完成，Builder 不再生成排除谓词。
 

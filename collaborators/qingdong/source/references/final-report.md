@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `requirement_version` | — | 报告依据的需求版本 N |
 | `results` | 【结果】 | Top 10 每人 `{candidate_ref, name, current_company, current_title, verdict: "符合" \| "不符合", total, must_have, nice_to_have, risk, basis, unknown_items: [], detail_url}` |
-| `coverage` | 【搜索覆盖】 | `{rounds, queries: {primary, secondary}, seen, new, recommendable, strong, expansions: [{iteration, expansion, opened, recommendable, strong}], skipped_seen, company_words: [{word, new_candidates}], probes: [{company, card_count, usable}], pool_size: {initial, from_candidates}, prf: {promoted: [], rejected: []}, degraded_filters: []}`；`seen` 含扩张打开的人，`skipped_seen` 是因已看台账被跳过的卡片数 |
+| `coverage` | 【搜索覆盖】 | `{rounds, queries: {primary, secondary}, seen, new, recommendable, strong, expansions: [{iteration, expansion, opened, recommendable, strong}], skipped_seen, company_words: [{word, new_candidates}], refills: [{company, eligible, refilled}], pool_size: {initial, from_candidates}, prf: {promoted: [], rejected: []}, degraded_filters: []}`；`seen` 含扩张打开的人，`skipped_seen` 是因已看台账被跳过的卡片数 |
 | `seen_ledger_path` | — | 本次已看台账 `<TASK_WORK_DIR>/wts/seen.json` 的绝对路径，供下一次寻访（步骤 16 选了备选方向后）合并 |
 | `not_recommended` | 【未推荐摘要】 | `{count, reasons: [{reason, count}]}`，看过但没进推荐名单的人按主要原因聚合，不列个人 |
 | `verify_in_interview` | 【面试核实项】 | 照录需求版本的 `verify_in_interview`，提醒用户这些条件没有参与筛选 |
@@ -52,7 +52,7 @@
 - 公司来源：<company_sources 小节的结论，两三句>
 ```
 
-渲染规则：推荐名单使用 Markdown 表格，不放在代码块中；只列符合且总分 ≥60 的人，每人一行，没有则写“本次暂无可推荐人选”。公司、职位、学历和年限只用结果中已有信息，缺失写“未提供”；单元格中的竖线转义，换行合为空格。`failures` 每人计入数量；`not_recommended` 只出数量和原因，不出现任何个人；"找了 N 轮"里的轮数不含扩张，"看了 N 位"里的人数含扩张。候选人的 candidate_ref、PRF 词、公司探测数据、站内筛选降级项、扩张次数都留在文件里，用户视图不出现。报告输出后直接进入步骤 16 的方向选择。
+渲染规则：推荐名单使用 Markdown 表格，不放在代码块中；只列符合且总分 ≥60 的人，每人一行，没有则写“本次暂无可推荐人选”。公司、职位、学历和年限只用结果中已有信息，缺失写“未提供”；单元格中的竖线转义，换行合为空格。`failures` 每人计入数量；`not_recommended` 只出数量和原因，不出现任何个人；"找了 N 轮"里的轮数不含扩张和补搜，"看了 N 位"里的人数含扩张和补搜。候选人的 candidate_ref、PRF 词、补搜记录、站内筛选降级项、扩张次数都留在文件里，用户视图不出现。报告输出后直接进入步骤 16 的方向选择。
 
 ## 市场洞察
 

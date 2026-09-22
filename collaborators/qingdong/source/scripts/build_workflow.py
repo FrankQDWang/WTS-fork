@@ -18,16 +18,13 @@ from decision_basis import decision_receipt
 
 
 SKILL_NAME = "wts"
-SKILL_VERSION = "0.6.1"
+SKILL_VERSION = "0.7.0"
 WORKFLOW_SCHEMA = "browser.workflow.v1"
 SCHEMA_VERSION = 2
 MAX_SEARCH_ITERATION = 3
 PRIMARY_DETAIL_BUDGET = 5
 SECONDARY_DETAIL_BUDGET = 3
 MAX_CARDS_PER_PATH = 30
-MAX_PROBE_COMPANIES = 3
-PROBE_ITERATION = 1
-PROBE_RECALL_THRESHOLD = 10
 # 轮内扩张：同一轮最多扩张几次、一次最多开多少份详情。
 MAX_EXPANSIONS_PER_ITERATION = 3
 MAX_EXPAND_DETAILS = MAX_CARDS_PER_PATH
@@ -119,7 +116,7 @@ ALLOWED_PLAN_KEYS = {
     "action_delay_ms",
     "decision_basis",
 }
-ALLOWED_PROBE_PLAN_KEYS = {"anchor", "companies", "site_filters", "action_delay_ms"}
+ALLOWED_REFILL_PLAN_KEYS = {"dropped_company"}
 ALLOWED_EXPAND_PLAN_KEYS = {
     "requirement_version",
     "query",
@@ -163,7 +160,6 @@ def load_assets() -> dict[str, Any]:
             "preflight": load_json(ASSET_ROOT / "workflows" / "preflight.json"),
             "search": load_json(ASSET_ROOT / "workflows" / "search.json"),
             "detail": load_json(ASSET_ROOT / "workflows" / "detail.json"),
-            "probe": load_json(ASSET_ROOT / "workflows" / "probe.json"),
         },
     }
 
@@ -580,36 +576,15 @@ def read_expand_plan(plan_path: str) -> tuple[dict[str, Any], list[dict[str, str
     )
 
 
-def read_probe_plan(plan_path: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
-    plan = load_plan_object(plan_path, "探测计划", max_bytes=16 * 1024)
-    unknown_keys = sorted(set(plan) - ALLOWED_PROBE_PLAN_KEYS)
+def read_refill_plan(plan_path: str) -> str:
+    plan = load_plan_object(plan_path, "补搜计划", max_bytes=16 * 1024)
+    unknown_keys = sorted(set(plan) - ALLOWED_REFILL_PLAN_KEYS)
     if unknown_keys:
-        raise ValueError(f"探测计划包含未知字段: {', '.join(unknown_keys)}")
-    anchor = normalize_query(plan.get("anchor"), "anchor")
-    companies = normalize_string_list(
-        plan.get("companies"), "companies", maximum=MAX_PROBE_COMPANIES
-    )
-    if not companies:
-        raise ValueError(f"companies 至少 1 家、最多 {MAX_PROBE_COMPANIES} 家")
-    if len(set(companies)) != len(companies):
-        raise ValueError("companies 不能重复")
-    queries = [normalize_query(f"{anchor} {company}", f"companies[{company}]") for company in companies]
-    if not isinstance(plan.get("site_filters", {}), dict):
-        raise ValueError("site_filters 必须是对象")
-    normalized, warnings = normalize_plan(
-        {"site_filters": plan.get("site_filters") or {}, "hard_filters": {}}
-    )
-    return (
-        {
-            "anchor": anchor,
-            "companies": companies,
-            "queries": queries,
-            "site_filters": normalized["site_filters"],
-            "hard_filters": {},
-            "action_delay_ms": plan.get("action_delay_ms"),
-        },
-        warnings,
-    )
+        raise ValueError(f"补搜计划包含未知字段: {', '.join(unknown_keys)}")
+    dropped = plan.get("dropped_company")
+    if not isinstance(dropped, str) or not dropped.strip() or len(dropped.strip()) > 50:
+        raise ValueError("dropped_company 必须是 1-50 字符的公司名")
+    return dropped.strip()
 
 
 def map_filter_value(field: str, value: Any, channel: dict[str, Any]) -> Any:
@@ -1135,14 +1110,157 @@ def expected_expand_plan_path(task_work_dir: Path, iteration: int, expansion: in
     ).resolve()
 
 
-def expected_probe_plan_path(task_work_dir: Path, iteration: int) -> Path:
-    if iteration != PROBE_ITERATION:
-        raise ValueError(
-            f"公司词探测只在第 {PROBE_ITERATION} 轮前执行一次，文件名为 probe-{PROBE_ITERATION}.json"
-        )
+def expected_refill_plan_path(task_work_dir: Path, iteration: int) -> Path:
+    if not 1 <= iteration <= MAX_SEARCH_ITERATION:
+        raise ValueError(f"补搜只能附属于第 1-{MAX_SEARCH_ITERATION} 轮")
     return (
-        task_work_dir / SKILL_NAME / "search-plans" / f"probe-{iteration}.json"
+        task_work_dir / SKILL_NAME / "search-plans" / f"iteration-{iteration}-refill.json"
     ).resolve()
+
+
+def expected_refill_collect_path(task_work_dir: Path, iteration: int) -> Path:
+    if not 1 <= iteration <= MAX_SEARCH_ITERATION:
+        raise ValueError(f"补搜采集只能附属于第 1-{MAX_SEARCH_ITERATION} 轮")
+    return (
+        task_work_dir / SKILL_NAME / "search-plans" / f"iteration-{iteration}-refill-collect.json"
+    ).resolve()
+
+
+def load_verified_workflow(path: Path, root: Path) -> dict[str, Any]:
+    if not path.resolve().is_relative_to(root) or path.stat().st_size > 256 * 1024:
+        raise ValueError("历史工作流越界或超过大小限制")
+    workflow = load_json(path)
+    integrity = workflow.pop("integrity", {})
+    digest = hashlib.sha256(canonical_bytes(workflow)).hexdigest()
+    if digest != path.stem or integrity.get("digest") != digest:
+        raise ValueError("历史工作流摘要不匹配，不能依据已变化的计划继续")
+    return workflow
+
+
+def verified_workflows(args: argparse.Namespace, iteration: int) -> list[dict[str, Any]]:
+    root = Path(args.store_root).expanduser().resolve()
+    directory = root / "workflow-store" / args.task_id
+    if not directory.is_dir():
+        return []
+    found: list[dict[str, Any]] = []
+    for path in directory.glob("*.json"):
+        workflow = load_verified_workflow(path, root)
+        if (
+            workflow.get("task_id") == args.task_id
+            and workflow.get("iteration") == iteration
+            and (workflow.get("skill") or {}).get("name") == SKILL_NAME
+        ):
+            found.append(workflow)
+    return found
+
+
+def completed_results_by_workflow_id(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+    root = Path(args.store_root).expanduser().resolve()
+    directory = root / "result-store" / args.task_id
+    found: dict[str, dict[str, Any]] = {}
+    if not directory.is_dir():
+        return found
+    for path in directory.glob("*.json"):
+        if not path.resolve().is_relative_to(root) or path.stat().st_size > 16 * 1024 * 1024:
+            raise ValueError("历史结果越界或超过大小限制")
+        raw = path.read_bytes()
+        result = json.loads(raw)
+        metadata = result.get("workflow") or {}
+        if metadata.get("task_id") != args.task_id or hashlib.sha256(raw).hexdigest() != path.stem:
+            raise ValueError("历史结果任务或摘要不匹配，不能复用执行计划")
+        if result.get("status") not in {"success", "partial"}:
+            continue
+        workflow_id = metadata.get("workflow_id")
+        if not workflow_id:
+            continue
+        finished = metadata.get("finished_at") or ""
+        previous = found.get(workflow_id)
+        previous_finished = ((previous or {}).get("workflow") or {}).get("finished_at") or ""
+        if previous is None or previous_finished <= finished:
+            found[workflow_id] = result
+    return found
+
+
+def latest_completed(
+    args: argparse.Namespace,
+    iteration: int,
+    predicate,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    results = completed_results_by_workflow_id(args)
+    pairs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for workflow in verified_workflows(args, iteration):
+        if not predicate(workflow):
+            continue
+        result = results.get(workflow["workflow_id"])
+        if result:
+            pairs.append(((result.get("workflow") or {}).get("finished_at") or "", workflow, result))
+    if not pairs:
+        return None
+    pairs.sort(key=lambda item: item[0])
+    return pairs[-1][1], pairs[-1][2]
+
+
+def is_original_search_cards(workflow: dict[str, Any]) -> bool:
+    return (
+        not workflow.get("expansion")
+        and not workflow.get("refill")
+        and workflow.get("input_summary", {}).get("stage") == "cards"
+    )
+
+
+def is_original_collect(workflow: dict[str, Any]) -> bool:
+    return (
+        not workflow.get("expansion")
+        and not workflow.get("refill")
+        and workflow.get("input_summary", {}).get("stage") == "details"
+    )
+
+
+def is_refill_cards(workflow: dict[str, Any]) -> bool:
+    return bool(workflow.get("refill")) and workflow.get("input_summary", {}).get("stage") == "cards"
+
+
+def seen_candidate_refs(args: argparse.Namespace) -> set[str]:
+    path = Path(args.task_work_dir).expanduser().resolve() / SKILL_NAME / "seen.json"
+    if not path.is_file():
+        return set()
+    data = load_json(path)
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return set()
+    return {
+        row["candidate_ref"]
+        for row in entries
+        if isinstance(row, dict) and isinstance(row.get("candidate_ref"), str)
+    }
+
+
+def eligible_primary_count(result: dict[str, Any], seen: set[str]) -> int:
+    rows = ((result.get("data") or {}).get("candidates") or {}).get("primary") or []
+    if not isinstance(rows, list):
+        return 0
+    return sum(
+        1
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("card_hard_filter_status") in {"matched", "unknown"}
+        and row.get("candidate_ref") not in seen
+    )
+
+
+def collected_primary_count(workflow: dict[str, Any]) -> int:
+    selection = (workflow.get("input_summary") or {}).get("selection") or {}
+    primary = selection.get("primary") or []
+    return len(primary) if isinstance(primary, list) else 0
+
+
+def refill_primary_query(args: argparse.Namespace, iteration: int) -> str | None:
+    pair = latest_completed(args, iteration, is_refill_cards)
+    if not pair:
+        return None
+    plan = pair[0].get("input_plan") or {}
+    query = plan.get("primary_query")
+    return query if isinstance(query, str) and query else None
 
 
 def prefix_step_ids(value: Any, prefix: str) -> Any:
@@ -1264,41 +1382,6 @@ def build_emit_step(
             "candidates": candidates,
             "details": details,
             "failures": failures,
-        },
-    }
-
-
-def build_probe_emit_step(paths: list[dict[str, Any]], anchor: str) -> dict[str, Any]:
-    summary_paths: dict[str, Any] = {}
-    search: dict[str, Any] = {}
-    for path in paths:
-        name = path["name"]
-        summary_paths[name] = {
-            "company": path["company"],
-            "query": path["query"],
-            "card_count": {"$context": f"search_{name}.cards.length"},
-            "unsupported_filter_count": {
-                "$context": f"search_{name}.unsupported_filters.length"
-            },
-        }
-        search[name] = {
-            "company": path["company"],
-            "query": path["query"],
-            "unsupported_filters": {"$context": f"search_{name}.unsupported_filters"},
-            "pages": {"$context": f"search_{name}.pages"},
-        }
-    return {
-        "id": "emit-probe-result",
-        "action": "result.emit",
-        "value": {
-            "summary": {
-                "workflow": "company_probe",
-                "channel": "liepin",
-                "anchor": anchor,
-                "recall_threshold": PROBE_RECALL_THRESHOLD,
-                "paths": summary_paths,
-            },
-            "search": search,
         },
     }
 
@@ -1477,7 +1560,7 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
 
 def build_collect(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
     """Open only the Agent's choices from a completed, integrity-checked card result."""
-    selection = load_plan_object(args.plan_file, "详情名单", max_bytes=MAX_PLAN_BYTES)
+    selection = dict(load_plan_object(args.plan_file, "详情名单", max_bytes=MAX_PLAN_BYTES))
     if set(selection) - {"result_ref", "primary", "secondary"}:
         raise ValueError("详情名单只接受 result_ref、primary、secondary")
     match = re.fullmatch(r"result://([A-Za-z0-9._-]{1,100})/([a-f0-9]{64})",
@@ -1496,27 +1579,41 @@ def build_collect(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str,
         raise ValueError("只能从当前任务已完成的卡片结果挑人")
     source = None
     for file in (root / "workflow-store" / args.task_id).glob("*.json"):
-        if not file.resolve().is_relative_to(root) or file.stat().st_size > 256 * 1024:
-            raise ValueError("卡片工作流越界或过大")
-        workflow = load_json(file)
+        workflow = load_verified_workflow(file, root)
         if workflow.get("workflow_id") != result.get("workflow", {}).get("workflow_id"):
             continue
-        integrity = workflow.pop("integrity", {})
-        digest = hashlib.sha256(canonical_bytes(workflow)).hexdigest()
-        if digest != file.stem or integrity.get("digest") != digest:
-            raise ValueError("卡片工作流摘要不匹配")
         source = workflow
         break
     if (not source or source.get("task_id") != args.task_id or source.get("iteration") != args.iteration
             or source.get("input_summary", {}).get("stage") != "cards"):
         raise ValueError("result_ref 必须对应本轮 search 的卡片结果")
+    refill_collect = getattr(args, "refill_collect", False)
+    if source.get("refill") and not refill_collect:
+        raise ValueError("补搜卡片结果须用 iteration-N-refill-collect.json 采集")
+    if refill_collect and not source.get("refill"):
+        raise ValueError("iteration-N-refill-collect.json 只能采集本轮补搜的卡片结果")
     plan = source["input_plan"]
+    if not plan.get("secondary_query") and selection.get("secondary") in ([], None):
+        selection.pop("secondary", None)
     names = ["primary"] + (["secondary"] if plan.get("secondary_query") else [])
+    if refill_collect:
+        names = ["primary"]
+        if "secondary" in selection:
+            raise ValueError("补搜采集只填写 result_ref 和 primary")
     if set(selection) != {"result_ref", *names}:
         raise ValueError("详情名单须填写本轮每条路径的数组，无人可选时写 []")
+    primary_limit = plan["limits"]["primary_max_details"]
+    if refill_collect:
+        original = latest_completed(args, args.iteration, is_original_collect)
+        already = collected_primary_count(original[0]) if original else 0
+        remaining = primary_limit - already
+        if remaining <= 0:
+            raise ValueError("本轮主路径采集已满，不能再补搜采集")
+        primary_limit = remaining
     selected, used = {}, set()
     for name in names:
-        refs = normalize_candidate_refs(selection[name], name, maximum=plan["limits"][f"{name}_max_details"])
+        maximum = primary_limit if name == "primary" else plan["limits"][f"{name}_max_details"]
+        refs = normalize_candidate_refs(selection[name], name, maximum=maximum)
         cards = result.get("data", {}).get("candidates", {}).get(name, [])
         eligible = {row.get("candidate_ref") for row in cards
                     if row.get("card_hard_filter_status") in {"matched", "unknown"}}
@@ -1526,11 +1623,13 @@ def build_collect(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str,
             raise ValueError("两路详情名单不能重复选人")
         used.update(refs)
         selected[name] = refs
-    # Preserve the confirmed interaction mode as well as the original query/filters.
     collect_args = copy.copy(args)
     collect_args.interaction_mode = source["interaction_mode"]
     workflow = build_search(collect_args, assets, selection=selected, source_plan=plan)
     workflow["input_summary"]["card_result_ref"] = selection["result_ref"]
+    if source.get("refill"):
+        workflow["refill"] = True
+        workflow["input_summary"]["refill"] = True
     return workflow
 
 
@@ -1541,9 +1640,12 @@ def build_expand(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
     plan, warnings = read_expand_plan(args.plan_file)
     base_plan = executed_plan(args, args.iteration)
     base_queries = {base_plan["primary_query"], base_plan.get("secondary_query")}
+    refill_query = refill_primary_query(args, args.iteration)
+    if refill_query:
+        base_queries.add(refill_query)
     if plan["query"] not in base_queries:
         raise ValueError(
-            "扩张计划的 query 必须是本轮已执行的 primary_query 或 secondary_query，扩张只重开同一页的卡片"
+            "扩张计划的 query 必须是本轮已执行的主路径、第二路或补搜查询，扩张只重开同一页的卡片"
         )
     base_version = base_plan.get("requirement_version", "v1")
     if plan["requirement_version"] != base_version:
@@ -1641,126 +1743,85 @@ def changed_fields_summary(previous: dict[str, Any], current: dict[str, Any], pr
 def executed_plan(args: argparse.Namespace, iteration: int) -> dict[str, Any]:
     """Recover the most recently completed plan for a round from immutable stores.
 
-    Expansion workflows share the round's iteration number but are never the round's
-    plan; they are skipped so the next round validates against the real search plan."""
-    root = Path(args.store_root).expanduser().resolve()
-    workflows: dict[str, dict[str, Any]] = {}
+    Expansion and refill share the round's iteration number but are never the
+    round's plan; they are skipped so the next round validates against the real
+    search plan."""
+    details_plans: dict[str, dict[str, Any]] = {}
+    original_cards_plan: dict[str, Any] | None = None
     cards_only = False
-    for path in (root / "workflow-store" / args.task_id).glob("*.json"):
-        if not path.resolve().is_relative_to(root) or path.stat().st_size > 256 * 1024:
-            raise ValueError("历史工作流越界或超过大小限制")
-        workflow = load_json(path)
-        if (workflow.get("task_id") == args.task_id and workflow.get("iteration") == iteration
-                and workflow.get("input_summary", {}).get("stage") == "cards"):
+    refill_collect_done = False
+    results = completed_results_by_workflow_id(args)
+    for workflow in verified_workflows(args, iteration):
+        if workflow.get("expansion"):
+            continue
+        if workflow.get("refill"):
+            if (
+                workflow.get("input_summary", {}).get("stage") == "details"
+                and workflow["workflow_id"] in results
+            ):
+                refill_collect_done = True
+            continue
+        stage = workflow.get("input_summary", {}).get("stage")
+        if stage == "cards":
             cards_only = True
-        if (
-            workflow.get("task_id") != args.task_id
-            or workflow.get("iteration") != iteration
-            or (workflow.get("skill") or {}).get("name") != SKILL_NAME
-            or workflow.get("expansion")
-            or workflow.get("input_summary", {}).get("stage") == "cards"
-        ):
+            if isinstance(workflow.get("input_plan"), dict):
+                original_cards_plan = workflow["input_plan"]
             continue
-        integrity = workflow.pop("integrity", {})
-        digest = hashlib.sha256(canonical_bytes(workflow)).hexdigest()
-        if digest != path.stem or integrity.get("digest") != digest:
-            raise ValueError("历史工作流摘要不匹配，不能依据已变化的计划继续")
         if isinstance(workflow.get("input_plan"), dict):
-            workflows[workflow["workflow_id"]] = workflow["input_plan"]
-    if not workflows:
-        if cards_only:
-            raise ValueError("本轮只有卡片结果；先执行 collect，再评分或结算")
-        # Compatibility for workflows compiled before input_plan was recorded.
-        return read_plan(str(expected_search_plan_path(Path(args.task_work_dir), iteration)))[0]
-
-    completed: list[tuple[str, str]] = []
-    for path in (root / "result-store" / args.task_id).glob("*.json"):
-        if not path.resolve().is_relative_to(root) or path.stat().st_size > 16 * 1024 * 1024:
-            raise ValueError("历史结果越界或超过大小限制")
-        raw = path.read_bytes()
-        result = json.loads(raw)
-        metadata = result.get("workflow") or {}
-        workflow_id = metadata.get("workflow_id")
-        if workflow_id not in workflows or result.get("status") not in {"success", "partial"}:
-            continue
-        if metadata.get("task_id") != args.task_id or hashlib.sha256(raw).hexdigest() != path.stem:
-            raise ValueError("历史结果任务或摘要不匹配，不能复用执行计划")
-        completed.append((metadata.get("finished_at") or "", workflow_id))
-    if not completed:
-        raise ValueError(f"第 {iteration} 轮没有已完成结果；先读取执行状态对账，不能跳过该轮或原样重跑")
-    return workflows[max(completed)[1]]
+            details_plans[workflow["workflow_id"]] = workflow["input_plan"]
+    if details_plans:
+        completed = [
+            ((results[workflow_id].get("workflow") or {}).get("finished_at") or "", workflow_id)
+            for workflow_id in details_plans
+            if workflow_id in results
+        ]
+        if not completed:
+            raise ValueError(f"第 {iteration} 轮没有已完成结果；先读取执行状态对账，不能跳过该轮或原样重跑")
+        return details_plans[max(completed)[1]]
+    if refill_collect_done and original_cards_plan:
+        return original_cards_plan
+    if cards_only:
+        raise ValueError("本轮只有卡片结果；先执行 collect，再评分或结算")
+    return read_plan(str(expected_search_plan_path(Path(args.task_work_dir), iteration)))[0]
 
 
-def build_probe(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
-    plan, warnings = read_probe_plan(args.plan_file)
-    channel = assets["channel"]
-    template = assets["workflows"]["probe"]
-    workflow = base_workflow(args, template, channel)
-    action_delay_ms = bounded_integer(
-        plan.get("action_delay_ms"),
-        1200,
-        channel["timing"]["minimum_action_delay_ms"],
-        5000,
+def build_refill(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
+    """In-round refill: drop the company word and search the primary path again."""
+    dropped = read_refill_plan(args.plan_file)
+    if any(workflow.get("refill") for workflow in verified_workflows(args, args.iteration)):
+        raise ValueError("同一轮只能补搜一次")
+    pair = latest_completed(args, args.iteration, is_original_search_cards)
+    if not pair:
+        raise ValueError("本轮还没有搜索卡片结果，不能补搜")
+    source, result = pair
+    plan = copy.deepcopy(source.get("input_plan") or {})
+    if not isinstance(plan.get("primary_query"), str):
+        raise ValueError("本轮搜索计划缺少 primary_query，不能补搜")
+    tokens = plan["primary_query"].split()
+    if dropped not in tokens:
+        raise ValueError("dropped_company 必须是本轮主路径查询里的一个完整词")
+    hard_companies = (plan.get("hard_filters") or {}).get("company") or []
+    if dropped in hard_companies:
+        raise ValueError("该公司是硬性条件，不能去掉后再搜")
+    eligible = eligible_primary_count(result, seen_candidate_refs(args))
+    limit = (plan.get("limits") or {}).get("primary_max_details", PRIMARY_DETAIL_BUDGET)
+    if eligible >= limit:
+        raise ValueError("主路径可采人数已达上限，无需补搜")
+    if eligible > 0 and not latest_completed(args, args.iteration, is_original_collect):
+        raise ValueError("可采人数大于 0 时先采集这些人，再补搜")
+    refill_plan = copy.deepcopy(plan)
+    refill_plan["primary_query"] = normalize_query(
+        " ".join(token for token in tokens if token != dropped),
+        "primary_query",
     )
-    site_filter_fields = {
-        field for field, value in plan["site_filters"].items() if value not in (None, [], "")
-    }
-    site_filter_program = compile_site_filter_program(plan, channel, action_delay_ms)
-    paths = [
-        {
-            "name": f"company_{index}",
-            "company": company,
-            "query": query,
-            "max_cards": MAX_CARDS_PER_PATH,
-            "max_details": 0,
-        }
-        for index, (company, query) in enumerate(zip(plan["companies"], plan["queries"]), start=1)
-    ]
-    steps: list[dict[str, Any]] = []
-    for path in paths:
-        steps.extend(
-            compile_path_steps(
-                path_name=path["name"],
-                query=path["query"],
-                max_cards=path["max_cards"],
-                max_details=0,
-                action_delay_ms=action_delay_ms,
-                site_filter_program=site_filter_program,
-                card_predicates=[],
-                detail_predicates=[],
-                assets=assets,
-                plan=plan,
-                channel=channel,
-                interaction_mode=workflow["interaction_mode"],
-                drop_step_ids={"card-hard-filter"},
-            )
-        )
-    steps.append(build_probe_emit_step(paths, plan["anchor"]))
-    total_cards = MAX_CARDS_PER_PATH * len(paths)
-    workflow["limits"] = {
-        "max_pages": 1,
-        "max_candidates": total_cards,
-        "max_tabs": 0,
-        "max_result_bytes": channel["limits"]["max_result_bytes"],
-        "action_delay_ms": action_delay_ms,
-        "max_step_executions": 5000,
-        "max_loop_iterations": 20,
-        "max_extract_items": total_cards,
-        "max_field_length": channel["limits"]["max_section_length"],
-        "default_timeout_ms": channel["timing"]["search_timeout_ms"],
-        "poll_interval_ms": channel["timing"]["poll_interval_ms"],
-    }
-    workflow["input_summary"] = {
-        "probe": True,
-        "anchor": plan["anchor"],
-        "companies": plan["companies"],
-        "queries": plan["queries"],
-        "recall_threshold": PROBE_RECALL_THRESHOLD,
-        "site_filter_fields": sorted(site_filter_fields),
-        "warnings": warnings,
-    }
-    workflow["steps"] = steps
-    validate_workflow(workflow)
+    refill_plan.pop("secondary_query", None)
+    refill_plan["limits"] = normalize_search_limits(refill_plan.get("limits"), has_secondary=False)
+    refill_args = copy.copy(args)
+    refill_args.interaction_mode = source.get("interaction_mode")
+    workflow = build_search(refill_args, assets, source_plan=refill_plan)
+    workflow["refill"] = True
+    workflow["input_summary"]["refill"] = True
+    workflow["input_summary"]["dropped_company"] = dropped
     return workflow
 
 
@@ -1849,10 +1910,10 @@ def settle_search(args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="WTS：preflight 登录前置；probe 公司探测；search 读取卡片；collect 采集所选详情；expand 轮内扩张；settle 结算最后已完成轮次",
-        epilog="没有 reflect 子命令。settle --iteration N 使用最后已完成轮次 N，不是 N+1。expand 附属于当前轮，不新增轮次。",
+        description="WTS：preflight 登录前置；search 读取卡片；collect 采集所选详情；refill 去掉公司词补搜；expand 轮内扩张；settle 结算最后已完成轮次",
+        epilog="没有 reflect 子命令。settle --iteration N 使用最后已完成轮次 N，不是 N+1。expand 和 refill 附属于当前轮，不新增轮次。",
     )
-    parser.add_argument("workflow_type", choices=["preflight", "probe", "search", "collect", "expand", "settle"])
+    parser.add_argument("workflow_type", choices=["preflight", "search", "collect", "refill", "expand", "settle"])
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--iteration", type=int, default=0)
     parser.add_argument(
@@ -1878,7 +1939,7 @@ def parse_args() -> argparse.Namespace:
         parser.error("--iteration 必须在 0-100 之间")
     if args.workflow_type == "preflight" and args.iteration != 0:
         parser.error("preflight 的 --iteration 必须为 0")
-    if args.workflow_type in {"search", "collect", "expand", "settle"} and not 1 <= args.iteration <= MAX_SEARCH_ITERATION:
+    if args.workflow_type in {"search", "collect", "refill", "expand", "settle"} and not 1 <= args.iteration <= MAX_SEARCH_ITERATION:
         parser.error(
             f"{args.workflow_type} 的 --iteration 仅支持 1-{MAX_SEARCH_ITERATION}；settle 填最后已完成轮次"
         )
@@ -1886,10 +1947,6 @@ def parse_args() -> argparse.Namespace:
         parser.error(f"expand 必须提供 --expansion，取值 1-{MAX_EXPANSIONS_PER_ITERATION}")
     if args.workflow_type != "expand" and args.expansion:
         parser.error("--expansion 只用于 expand")
-    if args.workflow_type == "probe" and args.iteration != PROBE_ITERATION:
-        parser.error(
-            f"probe 只在第 {PROBE_ITERATION} 轮前执行一次，--iteration 必须为 {PROBE_ITERATION}"
-        )
     if not args.task_work_dir:
         parser.error("缺少 DEEPAGENT_TASK_WORK_DIR 或 --task-work-dir")
     if not args.store_root:
@@ -1906,18 +1963,27 @@ def parse_args() -> argparse.Namespace:
 
     args.task_work_dir = str(task_work_dir)
     args.store_root = str(store_root)
-    if args.workflow_type in {"search", "collect", "probe", "expand"} and not args.plan_file:
+    args.refill_collect = False
+    if args.workflow_type in {"search", "collect", "refill", "expand"} and not args.plan_file:
         parser.error(f"{args.workflow_type} 工作流必须提供 --plan-file")
-    if args.workflow_type in {"search", "collect", "probe", "expand"}:
+    if args.workflow_type in {"search", "collect", "refill", "expand"}:
         plan_path = Path(args.plan_file).expanduser().resolve()
         if args.workflow_type == "search":
             expected_plan = expected_search_plan_path(task_work_dir, args.iteration)
         elif args.workflow_type == "collect":
-            expected_plan = (task_work_dir / SKILL_NAME / "search-plans" / f"iteration-{args.iteration}-collect.json").resolve()
-        elif args.workflow_type == "expand":
-            expected_plan = expected_expand_plan_path(task_work_dir, args.iteration, args.expansion)
+            regular_collect = (
+                task_work_dir / SKILL_NAME / "search-plans" / f"iteration-{args.iteration}-collect.json"
+            ).resolve()
+            refill_collect = expected_refill_collect_path(task_work_dir, args.iteration)
+            if plan_path == refill_collect:
+                args.refill_collect = True
+                expected_plan = refill_collect
+            else:
+                expected_plan = regular_collect
+        elif args.workflow_type == "refill":
+            expected_plan = expected_refill_plan_path(task_work_dir, args.iteration)
         else:
-            expected_plan = expected_probe_plan_path(task_work_dir, args.iteration)
+            expected_plan = expected_expand_plan_path(task_work_dir, args.iteration, args.expansion)
         if plan_path != expected_plan:
             parser.error(f"--plan-file 路径无效；当前轮次只能使用 {expected_plan}")
         args.plan_file = str(plan_path)
@@ -1944,7 +2010,7 @@ def main() -> None:
         "preflight": build_preflight,
         "search": build_search,
         "collect": build_collect,
-        "probe": build_probe,
+        "refill": build_refill,
         "expand": build_expand,
     }
     workflow = builders[args.workflow_type](args, assets)

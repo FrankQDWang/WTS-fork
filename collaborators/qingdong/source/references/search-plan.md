@@ -3,7 +3,7 @@
 按当前步骤读对应的节：
 
 - 写 `iteration-N.json`（步骤 7）：字段、站内筛选、硬性过滤，对照文末示例。
-- 步骤 6.5：探测计划。
+- 步骤 9 补搜：补搜计划。
 - collect（步骤 9）：常规详情名单。
 - 步骤 11.5：扩张计划。步骤 10：结果分区。
 
@@ -89,32 +89,48 @@ search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详�
 
 用户或 JD 明确声明为硬性的站内条件必须同步写入 `hard_filters`。不要假设站内筛选等同于最终硬筛。
 
-## 探测计划
+## 补搜计划
 
-公司词探测（SKILL.md 步骤 6.5）只在第 1 轮前做一次，计划文件固定为 `<TASK_WORK_DIR>/wts/search-plans/probe-1.json`，编译命令的 `workflow_type` 为 `probe`、`--iteration 1`；Builder 拒绝其他轮次。字段：
+门槛和先采再补见 SKILL.md 步骤 9。此处只规定字段。计划文件固定为：
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `anchor` | string | 必填，主锚点 |
-| `companies` | string[] | 必填，1-3 家、不重复；每家编译为一条查询 `"<anchor> <公司名>"`，合计 ≤ 50 字符 |
-| `site_filters` | object | 与搜索计划相同，取自硬性筛选条件 |
-| `action_delay_ms` | integer | 同搜索计划 |
+```text
+<TASK_WORK_DIR>/wts/search-plans/iteration-N-refill.json
+```
 
-没有 `hard_filters`、`semantic_criteria`、`limits`：探测只搜索并抽取首屏卡片（每家最多 30 张），不做硬筛、不采详情。
+编译：
 
-结果：`summary.workflow` 为 `company_probe`；`summary.paths.company_K` 每家一项 `{company, query, card_count, unsupported_filter_count}`；`search.company_K` 含 `unsupported_filters` 与 `pages`。`summary.recall_threshold` 为 10：`card_count` 高于该值可用，否则不可用。
+```
+python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" refill --task-id TASK_ID --iteration N --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N-refill.json"
+```
+
+只填一个字段，其余从本轮已执行的 search 计划抄：
 
 ```json
-{
-  "anchor": "AI Agent",
-  "companies": ["阿里巴巴", "字节跳动"],
-  "site_filters": {"expected_cities": ["上海"]}
-}
+{ "dropped_company": "实在智能" }
 ```
+
+Builder 校验：本轮已有 search 卡片结果；可采人数大于 0 时必须已经采集过；可采人数已达主路径上限则拒绝；`dropped_company` 是原 `primary_query` 里的一个完整词，且不在 `hard_filters.company`；新查询 = 去掉该词后的主路径，长度仍 1–50；只编主路径、只出卡片；同一轮只能一次。`executed_plan` 跳过补搜工作流，下一轮仍对账原计划的硬条件。
+
+第二次采集路径：`<TASK_WORK_DIR>/wts/search-plans/iteration-N-refill-collect.json`，命令仍是 `collect --iteration N`。只填 `result_ref` 和 `primary`；`result_ref` 必须是这次补搜的卡片结果。名单长度不得超过「主路径上限 − 本轮主路径已采集数」。
+
+```
+python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" collect --task-id TASK_ID --iteration N --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N-refill-collect.json"
+```
+
+扩张的 `query` 除了本轮 `primary_query` / `secondary_query`，也可以是补搜后的主路径查询。
 
 ## 常规详情名单
 
-路径：`<TASK_WORK_DIR>/wts/search-plans/iteration-N-collect.json`，命令为 `collect --iteration N`。只填以下字段，不重写搜索条件：
+路径：`<TASK_WORK_DIR>/wts/search-plans/iteration-N-collect.json`，命令为 `collect --iteration N`。只填以下字段，不重写搜索条件。第 1 轮及没有第二路时只写 `primary`：
+
+```json
+{
+  "result_ref": "result://TASK_ID/<本轮卡片结果摘要>",
+  "primary": ["liepin:a1b2c3d4e5"]
+}
+```
+
+第 2 轮起有第二路时才写 `secondary`；无人可选写 []：
 
 ```json
 {
@@ -124,7 +140,7 @@ search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详�
 }
 ```
 
-第 1 轮及没有第二路时省略 secondary；本轮存在的路径必须填写，无人可选写 []。主路径最多 5 人、第二路最多 3 人，且不超过本轮计划上限；只选相应卡片结果中 matched/unknown 的编号，两路不重复。Builder 从结果恢复原计划，拒绝越界名单。collect 返回 `details.primary/secondary` 和 `failures.primary/secondary`；评分的 detail_ref 引用这次结果。
+没有第二路时多写 `"secondary": []` 与省略同等。本轮存在的路径必须填写。主路径最多 5 人、第二路最多 3 人，且不超过本轮计划上限；只选相应卡片结果中 matched/unknown 的编号，两路不重复。Builder 从结果恢复原计划，拒绝越界名单。collect 返回 `details.primary/secondary` 和 `failures.primary/secondary`；评分的 detail_ref 引用这次结果。
 
 ## 扩张计划
 
@@ -139,7 +155,7 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `requirement_version` | string | 与本轮 iteration-N.json 相同 |
-| `query` | string | 必填；必须逐字等于本轮已执行的 `primary_query` 或 `secondary_query`，扩张只重开同一页 |
+| `query` | string | 必填；必须逐字等于本轮已执行的 `primary_query`、`secondary_query` 或补搜后的主路径查询，扩张只重开同一页 |
 | `include_candidate_refs` | string[] | 必填，1-30 个、不重复；Agent 从该路 `candidates.<path>` 卡片里挑出要打开的人。Builder 编译为卡片谓词 `selected_for_expansion`：不在名单内即 reject；详情预算 = 名单长度 |
 | `site_filters` | object | 照抄本轮计划 |
 | `hard_filters` | object | 照抄本轮计划；与已执行计划不一致即拒绝编译 |
