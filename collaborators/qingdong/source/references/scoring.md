@@ -1,16 +1,16 @@
 # 隔离评分量表
 
-步骤 11 评分时读。每位候选人单独评分：只依据当前需求版本和这一份详情，各候选人互相独立。
+评分子 Agent 读。按人对照当前需求版本和该人详情打分，人与人之间不互相参照。相关经验按简历工作或项目起止时间计算，重叠时段只计一次，信息不足记待核实；不用候选人年龄或毕业年份反推年限。
 
-## 子 Agent 评分
+## 返回
 
-主 Agent 先复用当前需求版本下的已有评分，再对每位待评分者调用宿主 `task`，使用宿主提供的可读文件的子 Agent 类型。每个任务只给当前已确认需求文件、本文件、索引中的单人详情文件及本轮 N；按宿主并发能力一起派发。子 Agent 直接读这三个文件，独立评分，返回一次结果。主 Agent 汇总前检查每位待评分者都有对应条目；失败或漏项保留为未完成，不补造分数。
+一次返回 JSON：
 
-任务说明：
+- `candidate_scores`：每人一条。字段仅限 `candidate_ref`、`detail_ref`、`detail_section`（照抄详情文件）、`scored_iteration`（本轮 N）、`matches`、`must_score`、`nice_score`、`risk_score`（后两项无对应需求时为 null）、`must_unknown`、`unknown`（最多 20 项、每项 200 字内）、`evidence_summary`（800 字内的推荐或不推荐理由，不是履历复述）、`correction_reason`（仅重评时填）。
+- `labels`：`[{candidate_ref, total, recommendable, strong}]`，口径见下。
+- `company_hits`：总分 ≥ 70 的人各一条 `{candidate_ref, current, past[]}`；没有则 `[]`。
 
-> 读取指定的已确认需求、评分规则和单人详情文件，按规则评这一人。只返回一个 candidate_scores JSON 条目：candidate_ref、detail_ref、detail_section 照抄详情文件；scored_iteration 填本轮 N；matches 为布尔值；must_score、nice_score、risk_score 为 0–100 整数，不适用的后两项填 null；must_unknown 为布尔值，表示必须满足项是否仍有未核实内容；unknown 列出未能核实的条件（最多 20 项，每项 200 字内）；evidence_summary 用 800 字内说明各分项的原文依据。仅重评时按主 Agent 给出的原因填写 correction_reason。返回评分与必要证据，不复述简历全文；总分和排名由 Builder 计算。
-
-主 Agent 只传文件路径和上述任务说明，不先读取或转述全部详情。扩张新增者同样处理，沿用本轮 N；重评沿用原始详情引用。
+核对每位待评人都有 `candidate_scores` 与 `labels` 条目；缺的留未完成，不补造。总分和排名由 Builder 复核。
 
 ## 硬冲突
 
@@ -31,12 +31,7 @@
 
 - **可推荐** = 符合且总分 ≥ 60。
 - **强匹配** = 符合、总分 ≥ 80、必须满足 ≥ 70、风险不适用或 ≤ 30，且必须满足项均已核实（must_unknown=false）；加分项 unknown 不影响此门槛。
-- **高分候选人** = 总分 ≥ 70（用于目标公司池扩充，见 SKILL.md 步骤 3.5）。
-- **强池** = Top 10 已满且至少 5 位强匹配。
-- **扩张门**（用于 SKILL.md 步骤 11.5）= 本轮新评分的候选人中可推荐占比 ≥ 50%，或本轮新增强匹配 ≥ 2；且尚未成强池。只看本轮新人，不看累计。
 
 ## Top 10
 
-合并当前需求版本下历轮全部已评分候选人，按总分、必须满足分、candidate_ref 的顺序确定性重排，只展示前 10；退出榜单的候选人评分继续保留。需求版本切换后，所有已评分候选人按新版本重评，Top 10 重建。
-
-原始评分与证据引用保存在下一轮计划的 `decision_basis.candidate_scores`。Builder 校验历史保留、内容寻址的详情引用和需求一致性，并返回确定性的 scores、counts、top10；播报和最终报告使用这些结果，不再由模型重复计算。
+合并当前需求版本下历轮全部已评分候选人，按总分、必须满足分、candidate_ref 的顺序确定性重排，只展示前 10；退出榜单的候选人评分继续保留。需求版本切换后全部重评。原始评分写入 `decision_basis.candidate_scores`；Builder 复核总分、计数和 Top 10。

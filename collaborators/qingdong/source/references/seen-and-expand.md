@@ -37,7 +37,7 @@
 
 - **步骤 10 得到索引立刻追加**。索引每人一条，`detail_ref` 对应台账 `result_ref`，`detail_section` 对应 `section`，`finished_at` 对应 `opened_at`；轮次与扩张次数取本次执行值。失败者的 `detail_status` 为 failed。已在台账里的 candidate_ref 不重复追加，也不改写首次记录。
 - **失败可重开一次**。只失败过一次的人下一轮可再选；第二次仍失败则跳过。
-- **rejected 也算已看**。详情硬筛淘汰的人已经有详情，不需要再打开；需求版本变化后从 `result_ref` 重读详情重评，而不是重新打开页面。
+- **rejected 也算已看**。详情硬筛淘汰的人已经有详情，不需要再打开；需求版本变化后沿用原 `detail_ref` / `profile_path` 再派评分子 Agent 重评，不重新打开页面。
 - **跨任务合并**。步骤 1 发现对话历史里有上一次寻访报告的 `seen_ledger_path` 时，把那份台账的 `entries` 全部并入本次，`merged_from` 记下来源。合并进来的人同样跳过。
 - **每次寻访结束**，台账路径写进 `report.json` 的 `seen_ledger_path`（`references/final-report.md`）。
 
@@ -51,7 +51,7 @@ search 只读卡片，不开详情。Agent 用 browser_read_workflow_result 读�
 python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" collect --task-id TASK_ID --iteration N --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N-collect.json"
 ```
 
-再执行返回的 workflow_ref。collect 沿用原查询和筛选，重新定位列表，只打开名单内的人；列表变化后找不到的人不换人补位。无人可选的路径写 []，全部为空时也执行 collect，作为本轮完成记录。详情从 collect 的 result_ref 读取和评分，搜索覆盖从 search 结果统计。
+再执行返回的 workflow_ref。collect 沿用原查询和筛选，重新定位列表，只打开名单内的人；列表变化后找不到的人不换人补位。无人可选的路径写 []，全部为空时也执行 collect，作为本轮完成记录。采集完成后按 SKILL.md 步骤 10 运行 `score_inputs.py`，用它返回的索引追加台账，把 `profile_path` 交给评分子 Agent。搜索覆盖从 search 结果统计。
 
 `coverage.skipped_seen` 由 Agent 统计本轮卡片中因台账被跳过的不同 candidate_ref 数。去重由 Agent 完成，Builder 不再生成排除谓词。
 
@@ -59,7 +59,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" collect --ta
 
 ### 触发
 
-步骤 11 评完本轮新人后，按 `references/scoring.md` 的**扩张门**判断：本轮新人里可推荐占比 ≥ 50%，或本轮新增强匹配 ≥ 2，且尚未成强池。达到即扩张，而不是进下一轮；未达到照常走步骤 12。
+第 1 轮先完成 SKILL.md 步骤 11.3，用确认后的 `labels` 判断扩张门；第 2 轮起在步骤 11 评完新人后判断。**扩张门** = 本轮新人里可推荐占比 ≥ 50%，或本轮新增强匹配 ≥ 2，且尚未成强池（Top 10 已满且强匹配 ≥ 5）。达到即扩张，而不是进下一轮；未达到照常走步骤 12。
 
 扩张完成、评完扩张新人后再判断一次：仍达标且本页还有值得看的人，可以再扩一次；同一轮最多 3 次。扩张不计入轮次预算，也不改变"最大轮次 = min(轮次预算, 3)"。
 
@@ -85,8 +85,8 @@ Builder 只设技术上限：一次扩张最多 30 人（首屏卡片数），�
 python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" expand --task-id TASK_ID --iteration N --expansion K --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N-expand-K.json"
 ```
 
-调用一次 browser_run_workflow，读 `details.expand`（同步骤 10 的读法），追加台账，只对新人评分（同步骤 11，`detail_section` 写 `details.expand`，`scored_iteration` 写 N），再回到"触发"判断是否继续。扩张评出的人和常规轮的人一起进下一轮的 `decision_basis.candidate_scores`，也一起参与 Top 10、PRF 种子和目标公司池扩充。
+调用一次 browser_run_workflow，按步骤 10 导出索引并追加台账，按步骤 11 只评新人（`detail_section` 写 `details.expand`，`scored_iteration` 写 N），再回到"触发"判断是否继续。扩张评出的人和常规轮的人一起进下一轮的 `decision_basis.candidate_scores`，也一起参与 Top 10 和目标公司池扩充。
 
 ### 播报
 
-扩张前："这轮开出来的人质量不错，我再从这一页挑 N 位打开看看，预计 X 分钟，期间不会有新消息。"扩张后并入步骤 11 的播报口径：本次扩张看了几人、新增几位可推荐、几位强匹配。挑人依据、candidate_ref、扩张次数留在决策记录里。
+扩张前："这轮开出来的人质量不错，我再从这一页挑 N 位打开看看，预计 X 分钟，期间不会有新消息。"扩张后并入步骤 11 的播报口径：这次又看了几人、新增加几位值得推荐、几位很匹配。挑人依据留在决策记录里。

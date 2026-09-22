@@ -55,7 +55,7 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 
 - `company`、`work_content`: 写入 `site_filters` 时 Builder 会记 `SITE_FILTER_UNSUPPORTED` 并跳过页面筛选；请同时写入 `hard_filters` 做文本硬筛。
 
-不要写入 `age_range`、`activity_recency`、`job_hop_frequency`。年龄、活跃度、跳槽频率不参与检索或硬筛。
+不要写入 `age_range`、`activity_recency`、`job_hop_frequency`。年龄、活跃度、跳槽频率不参与检索或硬筛。年龄要求已按 SKILL.md 转成 `experience_years` 的，只写年限字段。
 
 站内筛选只能使用猎聘支持的离散预设。Selector、控件定位、弹窗交互和取值标签由 Skill 渠道资产维护，计划中不得出现 Selector 或点击步骤。不要为了表达 `0-3 年` 等精确范围而选近似预设；把精确条件保留在 `hard_filters`。若站内工作年限不是受支持的预设，Builder 只会在 `hard_filters` 存在完全相同范围时移除该站内条件并返回 warning，否则拒绝计划。
 
@@ -118,7 +118,7 @@ search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详�
 
 ## 扩张计划
 
-轮内扩张（SKILL.md 步骤 11.5）在本轮评分达到扩张门之后执行，只重开本轮某一条查询首屏上 Agent 点名的卡片。计划文件固定为：
+轮内扩张（SKILL.md 步骤 11.5）在扩张门达标后执行。第 1 轮先过步骤 11.3，用确认后的 `labels` 判断；第 2 轮起评分后判断。只重开本轮某一条查询首屏上 Agent 点名的卡片。计划文件固定为：
 
 ```text
 <TASK_WORK_DIR>/wts/search-plans/iteration-N-expand-K.json
