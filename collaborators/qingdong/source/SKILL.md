@@ -11,11 +11,11 @@ description: 需求澄清或猎聘找人。用户给出 JD 要做需求澄清，
 
 ### 提问
 
-确认用 `request_user_input` 卡片，同一次模型响应只调用它。顶层依次写 skill_name=wts、step_id、title、questions；questions 数组结束后只闭合一次顶层对象。字段以宿主 schema 为准，默认值和空字段省略。完整依据先展示为正文，卡片只放短问题、选项和必要差异；每题 ≤ 8 项，label ≤ 80 字，选项 description ≤ 240 字，prompt ≤ 300 字。
+工具参数按宿主 schema 生成一个完整 JSON 对象。明确未执行的参数错误修正后重发一次；仍失败则说明阻塞，保留确认卡片流程。用户只问原因时先解释，要求继续才续跑。确认答案到达后接下一步，阶段完成不作为整次寻访结束。
 
-推荐用 label 前缀 `[推荐]`：单选 1 项，多选前 3 项（不足则全标）；依据在正文或 description 中写一次。允许补充用 allow_custom=true；自由填写的推荐值放 custom_placeholder。
+request_user_input 是**独占调用**：它所在的这一轮里没有别的工具调用。固定 skill_name=wts，step_id 见各步。宿主的字段约束：每题最多 8 个选项；label ≤ 80 字，只放选项本身，理由和差异写在 description（≤ 240 字）；prompt ≤ 300 字；用户可自行填写用 allow_custom=true 表达，推荐的填写值放 custom_placeholder。确认需求时，完整需求稿放在问题的 description；如果超过字段限制，先作为普通文本完整输出，description 只放摘要。prompt 始终只写一句简短问题，不重复正文。
 
-卡片等待中保持等待，收到当前 step_id 的答案才继续。用户询问原因时只解释；明确要求继续或重发时才执行。参数报错、卡片未出现或恢复中断时读 `references/interaction-recovery.md`；保留已完成调研与确认结果。
+**每次让用户选，都给推荐**——推荐统一写在 label 开头：`[推荐] 选项内容`；所有选项的 `recommended` 字段保持 false（宿主的推荐标记每题只允许一个，且会和前缀重复，所以只用前缀）。单选：一项带 [推荐]。多选：前 3 项带 [推荐]（不足 3 个可选项时全标），按推荐顺序排列。自由填写：custom_placeholder 给推荐值。每个推荐在 description 里附一句依据，推荐就是 Agent 自己判断的公开版本，让用户多数时候只需同意。
 
 **用户看到的一律是白话**：选项、画像、播报、报告都写给猎头看。Agent 的规格和记录（需求确认稿、内部报告）写到任务工作目录 `<TASK_WORK_DIR>/wts/` 下的文件里，给用户的文本是从文件渲染出来的视图；title 范围、公司层、置信度、candidate_ref 等内部字段只在文件和决策记录里出现。
 
@@ -29,7 +29,7 @@ description: 需求澄清或猎聘找人。用户给出 JD 要做需求澄清，
 
 完成标准：每一句去掉任务目录和工具名之后，仍能单独讲给猎头听；句子主干是中文。
 
-检索进度只在标了 **播报** 的节点说话。搜索计划编译失败、改计划、漏写字段时，先修正到能编译再播报。表单确认与失败说明按上面的提问规则执行。猎聘要重新登录或要验证码时，例：「猎聘要求重新登录，浏览器窗口已打开，请登录后我会自动继续。」
+只在标了 **播报** 的节点说话。编译失败、改计划、漏写字段：改对并能编译，这一轮不对用户输出任何字。猎聘要重新登录或要验证码时才开口，例：「猎聘要求重新登录，浏览器窗口已打开，请登录后我会自动继续。」
 
 ## 执行 SOP
 
@@ -234,7 +234,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 本轮有评分记录时，先给用户看判断样例，再决定是否扩张。没有评分记录就进入步骤 12。第 2 轮起不执行本步。
 
-样例从本轮 `labels` 里取 2 位值得推荐的（优先很匹配）和 1 位不推荐的；某一类不足就有几位写几位，样例全部来自本轮已评分的这些人。每人三行，只取该人详情文件和该人的 `evidence_summary`：第一行是详情里的 `display_name`；第二行是 `work_experience_summary` 里已有的公司、职位、起止时间，公司用原文，该字段为空时用 `current_work_text`；第三行是该人的 `evidence_summary`。分数留在评分记录里。
+从本轮已评分的 `labels` 取 2 位值得推荐的（优先很匹配）和 1 位不推荐的，不足则按实有数量。每人两行：① 姓名、最近一段公司/职位/起止时间，取自该人的 `display_name` 和 `work_experience_summary`（为空则用 `current_work_text`，缺项不补）；② 根据该人的 `evidence_summary`，用不超过 80 字说明推荐或不推荐的理由及尚未核实的关键点。分数留在记录里。
 
 先把这几则样例用普通文本输出，再调用 request_user_input，step_id=calibrate，prompt 一句「这个尺度对吗？」。单选，推荐「尺度对，继续找」：
 
@@ -244,7 +244,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 选了尺度对，用本轮 `labels` 进入步骤 11.5。选了偏松或偏严且写明了改哪一条：只改那一条，按 `references/requirements-draft.md` 写新版本，不重新确认画像；再派评分子 Agent，传入 `references/scoring.md` 路径、新需求路径、已评过的人的 `profile_path`、本轮 N，任务说明只写「按该文件一次返回规定 JSON」，`correction_reason` 写「尺度调整」。用返回的 `labels` 进入步骤 11.5，`company_hits` 按步骤 3.5 并入公司池。没写清改哪一条时，用同一步再问一句。
 
-完成标准：已输出的样例每人都能对上本轮一条评分记录，三行分别来自该人的 `display_name`、经历字段、`evidence_summary`；已拿到用户选择；若改了标准，新版本文件已写入，已评的人已按新版本重评，扩张门用的是重评后的 `labels`。
+完成标准：已输出的样例每人都能对上本轮一条评分记录，姓名与经历来自该人的详情，判断来自该人的 `evidence_summary`；已拿到用户选择；若改了标准，新版本文件已写入，已评的人已按新版本重评，扩张门用的是重评后的 `labels`。
 
 **播报**：尺度照旧，或改了哪一条、已按新标准重新看过；接下来是继续从这一页看人，还是这一页先到此为止。
 
