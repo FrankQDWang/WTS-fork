@@ -5,7 +5,7 @@ description: 需求澄清或猎聘找人。用户给出 JD 要做需求澄清，
 
 # 猎聘智能寻访
 
-浏览器由 `scripts/build_workflow.py` 编译出的工作流驱动，Agent 只接触 workflow_ref 和 result_ref；**网络搜索工具**只在步骤 3.5 调研目标公司、以及步骤 15 的市场求证子 Agent 中使用。
+浏览器由 `scripts/build_workflow.py` 编译出的工作流驱动，Agent 只接触 workflow_ref 和 result_ref；**网络搜索工具**只由步骤 3.5 的公司调研子 Agent 和步骤 15 的市场求证子 Agent 使用。
 
 ## 与用户交互
 
@@ -90,7 +90,7 @@ request_user_input 是**独占调用**：它所在的这一轮里没有别的工
 城市已确认之后才做这一步，因为调研要按城市找公司。两个分支：
 
 - **JD 已列出目标公司**：照录，每家置信度 1.0，来源标"JD"，跳过调研和提问。
-- **JD 未列出**：先用一句白话告知用户（"JD 没有指定目标公司，我先用网络搜索调研一下，再请您确认"），再按 `references/target-company-research.md` 用网络搜索工具调研，产出岗位定位、公司类别和带置信度的公司清单，然后按其提问格式调用 request_user_input，step_id=confirm-target-companies。用户自定义补充的公司置信度 1.0，来源标"用户"；用户勾选调研结果只表示采纳，置信度保持调研值。
+- **JD 未列出**：先用一句白话告知用户（"JD 没有指定目标公司，我先用网络搜索调研一下，再请您确认"），派一个调研子 Agent，传入 `references/target-company-research.md` 路径、岗位方向、主锚点、核心技能、职级、已确认城市 A/B 层和招聘公司全称/简称，任务说明只写「按该文件调研并一次返回规定 JSON」。主 Agent 收到精简结论后，按 `references/target-company-confirmation.md` 生成公司选择卡片，等用户确认后继续步骤 4。用户自定义补充的公司置信度 1.0，来源标"用户"；用户勾选调研结果只表示采纳，置信度保持调研值。
 
 **去向**：
 
@@ -303,7 +303,7 @@ report.json 里要带 `seen_ledger_path`（本次台账的绝对路径）和 `no
 
 ## 决策规则
 
-- 主 Agent 只消费卡片、索引、各子 Agent 返回值和 Builder 回执。可推荐、强匹配以 `labels` 和之后的 Builder 回执为准。`scoring.md` / `prf.md` / `reflect.md` / `market-research.md` 与详情文件只把路径交给对应子 Agent。
+- 主 Agent 只消费卡片、索引、各子 Agent 返回值和 Builder 回执。可推荐、强匹配以 `labels` 和之后的 Builder 回执为准。`target-company-research.md` / `scoring.md` / `prf.md` / `reflect.md` / `market-research.md` 与详情文件只把路径交给对应子 Agent。
 - 年龄、性别仅可作为用户明确确认的站内筛选（`site_filters.age_range`、`site_filters.gender`），不得写入 `hard_filters`，也不参与评分、排序、硬冲突判定或市场洞察；页面操作失败时按 `unsupported_filters` 报告未验证。学校名称、民族、婚育仍不写入检索、站内筛选、评分、排序、硬冲突判定或市场洞察，用户提出时说明不予执行。
 - 零结果是有效的查询结果，进入正常的评分、反思和 Controller 决策；工具错误、超时或页面失败是失败，不记作零结果。
 - 未被容错块捕获的 TARGET_NOT_FOUND、WAIT_TIMEOUT、PAGE_STATE_NOT_RECOGNIZED，或工作流引用失效，都结束当前轮；只有调整搜索计划、更新 Skill 页面规则或恢复明确的人工作业状态后，才重新编译执行。
