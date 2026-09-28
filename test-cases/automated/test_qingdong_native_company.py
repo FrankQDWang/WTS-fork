@@ -21,6 +21,25 @@ class NativeCompanyTests(unittest.TestCase):
     call = collection.CollectionTests.call
     result = collection.CollectionTests.result
 
+    def test_company_input_is_activated_before_waiting_for_combobox(self):
+        assets = builder.load_assets()
+        config = assets['channel']['filters']['company']
+        program = builder.compile_company_filter_program('网易', config, assets['channel'], 1200)
+        # Collapsed company control exposes its placeholder; combobox only exists after activation.
+        activated = False
+        filled = False
+        for step in program:
+            if step['op'] == 'page.click' and step['target'].get('within') == config['row']:
+                if step['target'].get('any_css') == ["input[placeholder='搜索公司']", '.ant-select-selection-placeholder']:
+                    activated = True
+            if step['op'] == 'page.wait' and step['until'].get('target', {}).get('css') == "input[role='combobox']":
+                self.assertTrue(activated, 'WAIT_TIMEOUT: company combobox is absent until the visible control is clicked')
+            if step['op'] == 'page.fill':
+                self.assertTrue(activated)
+                filled = True
+                break
+        self.assertTrue(filled)
+
     def native_search(self, hard=None):
         for p in (self.root / "workflow-store/test-task").glob("*.json"):
             p.unlink()

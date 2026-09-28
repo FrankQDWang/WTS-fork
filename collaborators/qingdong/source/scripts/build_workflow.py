@@ -715,6 +715,7 @@ def compile_company_filter_program(
 ) -> list[dict[str, Any]]:
     control_timeout = channel["timing"]["control_timeout_ms"]
     row = config["row"]
+    trigger = locator_within(config["trigger"], row)
     company_input = locator_within(config["input"], row)
     option = {
         **locator_within(config["option"], config["dropdown"]),
@@ -753,6 +754,14 @@ def compile_company_filter_program(
         }
 
     return [
+        wait("trigger", {"type": "exists", "target": trigger}),
+        *require_unique_filter_targets("company-trigger", {"row": row, "trigger": trigger}),
+        {
+            "id": "activate-company-control",
+            "op": "page.click",
+            "target": trigger,
+            "after_ms": action_delay_ms,
+        },
         wait("input", {"type": "exists", "target": company_input}),
         *require_unique_filter_targets(
             "company-control", {"row": row, "input": company_input}
