@@ -116,8 +116,6 @@ def decision_receipt(plan: dict, *, iteration: int, task_id: str, store_root: Pa
         found = [item for item in data if item.get("candidate_ref") == row["candidate_ref"]]
         if len(found) != 1:
             raise ValueError("candidate_ref 在引用的详情分区中必须唯一存在")
-        if found[0].get("detail_hard_filter_status") not in {"matched", "unknown"}:
-            raise ValueError("仅能评分详情硬筛为 matched/unknown 的候选人")
         return found[0]
 
     for row in rows:

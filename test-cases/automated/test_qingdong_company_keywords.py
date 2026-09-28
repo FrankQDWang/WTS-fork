@@ -79,3 +79,6 @@ class CompanyKeywordTests(unittest.TestCase):
             expanded = builder.build_expand(args, builder.load_assets())
         self.assertNotIn('company-trigger', json.dumps(expanded))
         self.assertNotIn('fill-company-input', json.dumps(expanded))
+        self.assertNotIn('detail-hard-filter', json.dumps(expanded))
+        self.assertEqual(expanded['steps'][-1]['value']['details']['expand'],
+                         {'$context': 'details_expand'})

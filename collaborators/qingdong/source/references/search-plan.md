@@ -27,7 +27,7 @@
 | `primary_query` | string | 必填，1-50 字符；主路径自然语言查询，不使用 `OR`、`AND`、`NOT`。锚点 + 支持词 + 可选公司词（SKILL.md 步骤 3.5） |
 | `secondary_query` | string | 可选；第二路自然语言查询，只含锚点和支持词。第 1 轮禁止出现 |
 | `site_filters` | object | 猎聘页面可直接设置的筛选条件 |
-| `hard_filters` | object | Builder 将其编译为通用 `data.filter` 谓词；先做卡片预筛，再做详情终筛 |
+| `hard_filters` | object | Builder 将其编译为通用 `data.filter` 谓词；仅做卡片规则硬筛 |
 | `semantic_criteria` | object | 给隔离评分用，不编译进页面动作 |
 | `decision_basis` | object | 第 2 轮起必填；保存截至上一轮的完整评分、PRF 判定和既定下一步 |
 | `limits.max_cards_per_path` | integer | 1-30，默认 30；每路首屏最多抽取的卡片数 |
@@ -72,7 +72,7 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 
 站内筛选只能使用猎聘支持的离散预设。Selector、控件定位、弹窗交互和取值标签由 Skill 渠道资产维护，计划中不得出现 Selector 或点击步骤。不要为了表达 `0-3 年` 等精确范围而选近似预设；把精确条件保留在 `hard_filters`。若站内工作年限不是受支持的预设，Builder 只会在 `hard_filters` 存在完全相同范围时移除该站内条件并返回 warning，否则拒绝计划。
 
-所有站内筛选都采用“失败后继续并上报”：某个字段的页面操作失败时跳过该字段、继续关键词搜索，并把字段、请求值和错误原因写入对应路径的 `search.<path>.unsupported_filters`。站内筛选只是缩小召回范围；同字段若属于硬条件，仍由后续卡片和详情 `data.filter` 执行。活跃度、跳槽频率、年龄、性别没有本地硬筛回退，失败记录的 `context.hard_filter_fallback` 为 false，必须说明条件未验证。
+所有站内筛选都采用“失败后继续并上报”：某个字段的页面操作失败时跳过该字段、继续关键词搜索，并把字段、请求值和错误原因写入对应路径的 `search.<path>.unsupported_filters`。站内筛选只是缩小召回范围；同字段若属于硬条件，由卡片 `data.filter` 执行，详情证据交评分子 Agent 核实。活跃度、跳槽频率、年龄、性别没有本地硬筛回退，失败记录的 `context.hard_filter_fallback` 为 false，必须说明条件未验证。
 
 ### 筛选澄清
 
@@ -112,14 +112,14 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 - `current_cities`、`expected_cities`、`education`: 字符串数组。
 - `experience_years`: `{min,max}`。
 - `school_requirements`: 字符串数组，支持 `211`、`985`、`double_first_class`、`overseas`；数组内按“满足任一项”判断。
-- `company`、`work_content`: 字符串数组；卡片阶段缺失或未命中记 unknown，详情阶段未命中记不符合。
+- `company`、`work_content`: 字符串数组；卡片缺失或未命中记 unknown，详情证据交评分子 Agent 判断。
 - `required_keywords.all`: 必须全部命中的关键词数组。
 - `required_keywords.any`: 至少命中一个的关键词数组。
 - `required_keyword_groups`: 二维字符串数组。组与组之间是 AND，每组内部是 OR。
 
-search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详情；collect 只采集 Agent 选定的人，再做详情硬筛。两次执行同属一轮，评分与 Controller 仍各做一次。
+search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详情；collect 保存所选人的全部已采集详情和失败记录，再交评分子 Agent。两次执行同属一轮，评分与 Controller 仍各做一次。
 
-卡片上能够明确读到的城市、学历、工作年限等字段可以直接淘汰不符合者。列表摘要没有出现关键词、院校标签或其他可能被页面折叠的信息时只记为 `unknown`，不得提前淘汰。Builder 为卡片和详情分别生成声明式谓词；通用浏览器不理解招聘字段。
+卡片上能够明确读到的城市、学历、工作年限等字段可以直接淘汰不符合者。列表摘要没有出现关键词、院校标签或其他可能被页面折叠的信息时只记为 `unknown`，不得提前淘汰。Builder 只为卡片生成硬筛谓词；通用浏览器不理解招聘字段。
 
 用户或 JD 明确声明的硬条件，在上述支持字段范围内同步写入 `hard_filters`；四类仅站内偏好除外。不要假设站内筛选等同于最终硬筛。
 

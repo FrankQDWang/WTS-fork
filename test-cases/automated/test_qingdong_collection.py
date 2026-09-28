@@ -89,6 +89,13 @@ class CollectionTests(unittest.TestCase):
         self.card_ref = self.card_ref.replace('test-task', 'other-task')
         self.assertIn('当前任务', self.collect([], ok=False)['error'])
 
+    def test_collect_emits_all_collected_details_without_second_filter(self):
+        w = self.collect(['liepin:new000001'])
+        self.assertFalse(any(s['id'].endswith('detail-hard-filter') for s in w['steps']))
+        emit = w['steps'][-1]['value']
+        self.assertEqual(emit['details']['primary'], {'$context': 'details_primary'})
+        self.assertIn('primary-card-hard-filter', [s['id'] for s in w['steps']])
+
     def test_empty_selection_never_opens_details(self):
         w = self.collect([])
         self.assertFalse(any(s['action'] == 'tabs.foreach' for s in w['steps']))

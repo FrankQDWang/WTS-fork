@@ -210,7 +210,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 ### 10. 读取结果
 
-检查 status、error_code、summary.metrics、summary.sections 和业务 summary。对每次采集的 success 或 partial 结果，运行 `scripts/score_inputs.py --task-id TASK_ID --result-ref RESULT_REF --task-work-dir "/ABSOLUTE/TASK_WORK_DIR"`（脚本路径以当前 Skill 目录为根）。脚本写出单人详情、只返回索引。主 Agent 用索引追加台账（见 `references/seen-and-expand.md`），把待评人的 `profile_path` 交给步骤 11。partial 时读 search 的 unsupported_filters。站内筛选降级只是召回范围没缩小；有 `hard_filter_fallback` 的条件继续由卡片和详情硬筛执行。年龄、性别、活跃度、跳槽频率没有本地硬筛回退，页面操作失败时必须报告未验证，不能承诺候选人已满足。失败原因读 failures 的错误字段。
+检查 status、error_code、summary.metrics、summary.sections 和业务 summary。对每次采集的 success 或 partial 结果，运行 `scripts/score_inputs.py --task-id TASK_ID --result-ref RESULT_REF --task-work-dir "/ABSOLUTE/TASK_WORK_DIR"`（脚本路径以当前 Skill 目录为根）。脚本写出单人详情、只返回索引。主 Agent 用索引追加台账（见 `references/seen-and-expand.md`），把待评人的 `profile_path` 交给步骤 11。partial 时读 search 的 unsupported_filters。站内筛选降级只是召回范围没缩小；有 `hard_filter_fallback` 的条件由卡片规则硬筛，详情证据交评分子 Agent 核实。年龄、性别、活跃度、跳槽频率没有本地硬筛回退，页面操作失败时必须报告未验证，不能承诺候选人已满足。失败原因读 failures 的错误字段。
 
 完成标准：本轮全部详情与失败记录已进入索引和台账；若有补搜，两批都已入账；partial 时已查明筛选降级原因。
 
@@ -218,9 +218,9 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 ### 11. 隔离评分
 
-仅对索引里详情硬筛 matched/unknown、且本需求版本尚未评分的人评分，跨轮按 candidate_ref 去重。派一个评分子 Agent：把 `references/scoring.md` 路径、当前需求路径、本轮待评人 `profile_path`、本轮 N（重评时另附原评分记录和调整原因）传给它，任务说明只写「按该文件一次返回规定 JSON」。消费 `{candidate_scores, labels, company_hits, calibration_samples}`：分数写入 decision_basis，`labels` 用于扩张门和播报，`company_hits` 按步骤 3.5 并入公司池。沿用旧分时逐字复制已有 `candidate_scores`；需求变更或明确算错才重评并写 correction_reason。
+对索引里有 `profile_path`、且本需求版本尚未评分的人评分，跨轮按 candidate_ref 去重。派一个评分子 Agent：把 `references/scoring.md` 路径、当前需求路径、本轮待评人 `profile_path`、本轮 N（重评时另附原评分记录和调整原因）传给它，任务说明只写「按该文件一次返回规定 JSON」。消费 `{candidate_scores, labels, company_hits, calibration_samples}`：分数写入 decision_basis，`labels` 用于扩张门和播报，`company_hits` 按步骤 3.5 并入公司池。沿用旧分时逐字复制已有 `candidate_scores`；需求变更或明确算错才重评并写 correction_reason。
 
-完成标准：本轮每位 matched/unknown 候选人都有评分记录；Top 10 与目标公司池已更新。
+完成标准：本轮每位已采集详情的候选人都有评分记录；Top 10 与目标公司池已更新。
 
 **播报**：本轮评了几人、新增加几位值得推荐、几位很匹配、名单上现在几人；从这些人里新记下几家公司（只说数量）。第 1 轮这则播报之后进入步骤 11.3；第 2 轮起进入步骤 11.5。
 

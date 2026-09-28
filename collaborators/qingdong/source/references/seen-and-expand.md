@@ -16,7 +16,7 @@
       "expansion": 0,
       "section": "details.primary",
       "result_ref": "result://TASK_ID/<sha256>",
-      "detail_status": "matched",
+      "detail_status": "collected",
       "opened_at": "2026-09-21T03:00:00Z"
     }
   ]
@@ -30,13 +30,13 @@
 | `iteration` / `expansion` | 首次打开所在的轮次；常规轮 `expansion` 为 0，扩张为 K |
 | `section` | `details.primary` / `details.secondary` / `details.expand` |
 | `result_ref` | 打开它的那次运行的结果引用；评分条目的 `detail_ref` 直接用它 |
-| `detail_status` | 详情硬筛状态 `matched` / `unknown` / `rejected`，采集失败写 `failed` |
+| `detail_status` | 采集成功写 `collected`，失败写 `failed`；旧记录保留原状态 |
 | `opened_at` | 运行结果的 `finished_at` |
 
 写入规则：
 
 - **步骤 10 得到索引立刻追加**。索引每人一条，`detail_ref` 对应台账 `result_ref`，`detail_section` 对应 `section`，`finished_at` 对应 `opened_at`；轮次与扩张次数取本次执行值。失败者的 `detail_status` 为 failed。已在台账里的 candidate_ref 不重复追加，也不改写首次记录。
-- **rejected 也算已看**。详情硬筛淘汰的人已经有详情，不需要再打开；需求版本变化后沿用原 `detail_ref` / `profile_path` 再派评分子 Agent 重评，不重新打开页面。
+- **已打开者都入账**。评分不推荐和旧记录 rejected 都算已看；需求版本变化后沿用原 `detail_ref` / `profile_path` 再派评分子 Agent 重评，不重新打开页面。
 - **跨任务合并**。步骤 1 发现对话历史里有上一次寻访报告的 `seen_ledger_path` 时，把那份台账的 `entries` 全部并入本次，`merged_from` 记下来源。合并进来的人同样跳过。
 - **每次寻访结束**，台账路径写进 `report.json` 的 `seen_ledger_path`（`references/final-report.md`）。
 
@@ -54,7 +54,7 @@
 
 **今天已完成的 run**：对话历史里每一份带 `seen_ledger_path` 的报告计 1 次。日期取报告在对话里出现的本地日期；没有可见时间时，改用该次自己打开的条目里最晚 `opened_at` 的本地日期。两个时间都没有则不计入今天。本次任务还没有报告，不计入已完成。
 
-**今天打开的详情**：上述台账里 `opened_at` 的本地日期是今天的条目。同一 `candidate_ref` 同一天只计第一次。`detail_status` 为 matched、unknown、rejected、failed 都计入，覆盖常规采集、补搜、扩张。
+**今天打开的详情**：上述台账里 `opened_at` 的本地日期是今天的条目。同一 `candidate_ref` 同一天只计第一次。全部 `detail_status` 都计入，覆盖常规采集、补搜、扩张。
 
 三条频率线，命中任意一条即由步骤 4.5 确认：
 

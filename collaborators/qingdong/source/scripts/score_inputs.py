@@ -39,7 +39,7 @@ def export_inputs(task_id, result_ref, task_dir, store_root):
                 if not isinstance(ref, str) or not ref or ref in refs:
                     raise ValueError('分区内 candidate_ref 必须非空且唯一')
                 refs.add(ref)
-                status = row.get('detail_hard_filter_status') if group == 'details' else 'failed'
+                status = row.get('detail_hard_filter_status', 'collected') if group == 'details' else 'failed'
                 entry = {'candidate_ref': ref, 'detail_ref': result_ref,
                          'detail_section': 'details.' + section, 'detail_status': status}
                 if group == 'details':

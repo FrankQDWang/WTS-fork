@@ -1596,7 +1596,6 @@ def compile_path_steps(
     action_delay_ms: int,
     site_filter_program: list[dict[str, Any]],
     card_predicates: list[dict[str, Any]],
-    detail_predicates: list[dict[str, Any]],
     assets: dict[str, Any],
     plan: dict[str, Any],
     channel: dict[str, Any],
@@ -1609,7 +1608,6 @@ def compile_path_steps(
         "keyword_text": query,
         "site_filter_program": site_filter_program,
         "card_predicates": card_predicates,
-        "detail_predicates": detail_predicates,
         "max_pages": 1,
         "max_candidates": max_cards,
         "max_details": max_details,
@@ -1618,7 +1616,6 @@ def compile_path_steps(
         "cards_context": f"search_{path_name}.cards",
         "card_filter_key": f"card_filter_{path_name}",
         "details_key": f"details_{path_name}",
-        "detail_filter_key": f"detail_filter_{path_name}",
         "failures_key": f"failures_{path_name}",
         "detail_browse_program": ([
             {"id": "browse-detail", "op": "page.scroll", "direction": "down", "distance": 600},
@@ -1642,7 +1639,7 @@ def compile_path_steps(
         search_step["program"].append(snapshot_step(channel))
     dropped = set(drop_step_ids or set())
     if max_details == 0:
-        dropped |= {"collect-candidate-details", "detail-hard-filter"}
+        dropped |= {"collect-candidate-details"}
     if dropped:
         steps = [step for step in steps if step["id"] not in dropped]
     steps = prefix_step_ids(steps, path_name)
@@ -1666,11 +1663,7 @@ def build_emit_step(
                 "$context": f"search_{name}.unsupported_filters.length"
             },
             "card_filter": {"$context": f"_runtime.reports.{name}-card-hard-filter"},
-            "detail_filter": (
-                {"$context": f"_runtime.reports.{name}-detail-hard-filter"}
-                if path["max_details"]
-                else {"evaluated": 0, "matched": 0, "rejected": 0, "unknown": 0}
-            ),
+            "collected_count": {"$context": f"details_{name}.length"} if path["max_details"] else 0,
         }
         search[name] = {
             "query": path["query"],
@@ -1680,7 +1673,7 @@ def build_emit_step(
         }
         candidates[name] = {"$context": f"card_filter_{name}"}
         details[name] = (
-            {"$context": f"detail_filter_{name}"} if path["max_details"] else []
+            {"$context": f"details_{name}"} if path["max_details"] else []
         )
         failures[name] = {"$context": f"failures_{name}"} if path["max_details"] else []
     return {
@@ -1801,7 +1794,6 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
     }
     hard_site_filter_fields = sorted(site_filter_fields & set(hard_filters))
     card_predicates = compile_predicates(hard_filters, "card")
-    detail_predicates = compile_predicates(hard_filters, "detail")
     paths = [
         {
             "name": "primary",
@@ -1836,7 +1828,6 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
                     [candidate_ref_predicate(selection[path["name"]])]
                     if selection is not None and selection[path["name"]] else []
                 ),
-                detail_predicates=detail_predicates,
                 assets=assets,
                 plan=path_plan,
                 channel=channel,
@@ -2019,7 +2010,6 @@ def build_expand(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
     site_filter_program = compile_site_filter_program(plan, channel, action_delay_ms)
     card_predicates = compile_predicates(hard_filters, "card")
     card_predicates.append(candidate_ref_predicate(plan["include_candidate_refs"]))
-    detail_predicates = compile_predicates(hard_filters, "detail")
     max_details = len(plan["include_candidate_refs"])
     paths = [
         {
@@ -2037,7 +2027,6 @@ def build_expand(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
         action_delay_ms=action_delay_ms,
         site_filter_program=site_filter_program,
         card_predicates=card_predicates,
-        detail_predicates=detail_predicates,
         assets=assets,
         plan=plan,
         channel=channel,
