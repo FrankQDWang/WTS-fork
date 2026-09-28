@@ -35,7 +35,9 @@ def prepare_collection(steps, channel, card_schema, prior, restore_search=False)
                 and isinstance(snapshot.get('query'), str)
                 and isinstance(snapshot.get('filters'), list)
                 and all(isinstance(x, str) for x in snapshot['filters'])
-                and isinstance(snapshot.get('page'), str))
+                # Liepin omits pagination for short result lists; null is an observed state.
+                and 'page' in snapshot
+                and (snapshot['page'] is None or isinstance(snapshot['page'], str)))
     same = {'all': [variable(f'search.list_state.{key}', snapshot[key])
                     for key in ('url', 'query', 'page')] +
                    [variable('search.list_state.filters.length', len(snapshot['filters']))] +

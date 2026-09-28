@@ -19,15 +19,25 @@ class CollectResumeTests(unittest.TestCase):
         self.assertFalse(any(s['op'] in ('page.fill', 'page.click') for s in program))
         self.assertTrue(any(s['id'] == 'primary-restore-search-if-changed' for s in program))
 
-    def collect_with_snapshot(self):
+    def collect_with_snapshot(self, page="1"):
         snapshot = {'url': 'https://h.liepin.com/search/getConditionItem',
-                    'query': 'Agent RAG', 'filters': ['7天内活跃'], 'page': '1'}
+                    'query': 'AI Agent Multi-Agent RAG DeepSeek',
+                    'filters': ['7天内活跃', '杭州', '杭州'], 'page': page}
         self.card_ref = self.result(self.card_workflow, {
             'search': {'primary': {'list_state': snapshot, 'pages': [1], 'unsupported_filters': []}},
             'candidates': {'primary': [{'candidate_ref': 'liepin:new000001',
                                        'card_hard_filter_status': 'unknown', 'search_page': 1}]}})
         self.write('iteration-1-collect.json', {'result_ref': self.card_ref, 'primary': ['liepin:new000001']})
         return snapshot, self.call('collect', 'iteration-1-collect.json')
+
+    def test_no_pagination_snapshot_is_reusable(self):
+        _, workflow = self.collect_with_snapshot(page=None)
+        program = next(s['program'] for s in workflow['steps'] if s['action'] == 'page.run')
+        gate = next(s for s in program if s['id'] == 'primary-restore-search-if-changed')
+        self.assertIsInstance(gate['condition'], dict,
+                              'Session 64: absent pagination must not force a new search')
+        page = next(c for c in gate['condition']['all'] if c['path'] == 'search.list_state.page')
+        self.assertIsNone(page['value'])
 
     def test_state_is_captured_and_recovery_is_explicit(self):
         self.assertIn('capture-list-state', json.dumps(self.card_workflow))
@@ -50,21 +60,22 @@ class CollectResumeTests(unittest.TestCase):
         runtime = Path('/Applications/Domi.app/Contents/Resources/browser-extensions/embedded-workflow')
         if not (runtime / 'content.js').exists() or not shutil.which('node'):
             self.skipTest('Installed Domi page interpreter and Node required for host compatibility check')
-        snapshot, workflow = self.collect_with_snapshot()
-        program = next(s['program'] for s in workflow['steps'] if s['action'] == 'page.run')
-        gate = next(s for s in program if s['id'] == 'primary-restore-search-if-changed')
-        self.assertEqual(gate['then'], [])
-        self.assertIn('primary-fill-keyword', json.dumps(gate['else']))
-        opening = next(s['open'] for s in workflow['steps'] if s['action'] == 'tabs.foreach')
-        suffixes = ('remember-selected-candidate', 'initialize-identity-matches',
-                    'locate-selected-candidate', 'require-unique-selected-candidate')
-        identity = [s for s in opening['pre_program'] if any(s['id'] == 'primary-' + k for k in suffixes)]
-        run = subprocess.run(['node', str(Path(__file__).with_name('collect_host_probe.js')), str(runtime)],
-                             input=json.dumps({'snapshot': snapshot, 'gate': gate, 'identity': identity,
-                                               'target': opening['target']}),
-                             capture_output=True, text=True, timeout=15)
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertIn('4 candidate-identity cases passed', run.stdout)
+        for page in ("1", None):
+            snapshot, workflow = self.collect_with_snapshot(page=page)
+            program = next(s['program'] for s in workflow['steps'] if s['action'] == 'page.run')
+            gate = next(s for s in program if s['id'] == 'primary-restore-search-if-changed')
+            self.assertEqual(gate['then'], [])
+            self.assertIn('primary-fill-keyword', json.dumps(gate['else']))
+            opening = next(s['open'] for s in workflow['steps'] if s['action'] == 'tabs.foreach')
+            suffixes = ('remember-selected-candidate', 'initialize-identity-matches',
+                        'locate-selected-candidate', 'require-unique-selected-candidate')
+            identity = [s for s in opening['pre_program'] if any(s['id'] == 'primary-' + k for k in suffixes)]
+            run = subprocess.run(['node', str(Path(__file__).with_name('collect_host_probe.js')), str(runtime)],
+                                 input=json.dumps({'snapshot': snapshot, 'gate': gate, 'identity': identity,
+                                                   'target': opening['target']}),
+                                 capture_output=True, text=True, timeout=15)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertIn('4 candidate-identity cases passed', run.stdout)
 
     def test_legacy_result_restores_search_but_keeps_selection(self):
         self.write('iteration-1-collect.json', {'result_ref': self.card_ref, 'primary': ['liepin:new000001']})

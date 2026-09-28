@@ -2,6 +2,12 @@
 
 ## 待合并
 
+### 2026-09-28 · 修正无分页结果的 Collect 误重搜
+
+- session 64 只有两条可选卡片，search 与 collect 的 list_state 一致，但 page=null。上一版要求页码为字符串，错误生成恒 false 的复用条件，导致 collect 重搜原来的 DeepSeek 查询。
+- 接受明确存在的 page=null 作为无分页状态；缺失快照或缺失 page 字段仍走恢复路径。同步补充文档约定，以本次真实状态补回归，修复前两项失败、修复后通过。
+- 该 session 后续 refill 已编译并发起，查询为 AI Agent Multi-Agent RAG，已移除 DeepSeek；带公司词重搜发生在 collect，而非 refill。
+
 ### 2026-09-28 · Collect 复用搜索结果页
 
 - session 63 确认 collect 调用复用了完整搜索模板，导致导航、关键词和筛选重复执行。改为 search 自动保存页面状态，collect 比对地址、关键词、筛选标签及页码；一致时直接采集，变化或旧结果无快照时才恢复该路查询。

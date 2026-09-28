@@ -176,7 +176,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" collect --ta
 
 没有第二路时多写 `"secondary": []` 与省略同等。本轮存在的路径必须填写。主路径最多 5 人、第二路最多 3 人，且不超过本轮计划上限；只选相应卡片结果中 matched/unknown 的编号，两路不重复。Builder 从结果恢复原计划，拒绝越界名单。collect 返回 `details.primary/secondary` 和 `failures.primary/secondary`；评分的 detail_ref 引用这次结果。
 
-collect 比对 search 返回的 list_state（页面地址、关键词、已提交筛选标签和页码）：一致时直接采集，变化或旧结果无快照时才在搜索页恢复原查询与筛选。每次点击前按 candidate_ref 重新定位，缺失或不唯一记入 failures，不按旧位置点人、不换人补位。
+collect 比对 search 返回的 list_state（页面地址、关键词、已提交筛选标签和页码）：无分页控件时 page=null 也是有效快照；一致时直接采集，变化或旧结果无快照时才在搜索页恢复原查询与筛选。每次点击前按 candidate_ref 重新定位，缺失或不唯一记入 failures，不按旧位置点人、不换人补位。
 
 搜索页不可用且 collect 尚未打开任何详情时，恢复登录/页面后可用原命令追加 `--restore-search`，显式导航并恢复搜索。正常采集不加此参数；已部分采集或效果未知时先对账，不能整批重跑。
 
