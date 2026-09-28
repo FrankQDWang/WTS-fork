@@ -60,16 +60,45 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
   - 用户写明只要某一档时，两边都只写那一档。
   - 站内最多两个值。可用值：本科、硕士、博士/博士后、大专、中专/中技、高中及以下。
 - `school_requirements`: 最多一个值，支持 `211`、`985`、`double_first_class`、`overseas`。
+- `company`: 最多一个公司名称的字符串数组，例如 `["字节"]`。只使用用户已确认的名称；多公司 OR 名单保留在 `hard_filters.company`，不要擅自挑第一家公司缩小召回。
+- `activity_recency`、`job_hop_frequency`: 单个预设字符串，见下方映射；只在用户明确指定时填写，未指定或不限时省略。
+- `age_range`: `{min,max}` 整数对象，边界为 16–60，至少给一个边界；仅用于站内筛选，不得写入 `hard_filters`。
+- `gender`: 单个值，支持 `male`、`female`、`男`、`女`；仅用于站内筛选，不得写入 `hard_filters`。
 
 策略允许写入但页面没有控件的字段：
 
-- `company`、`work_content`: 写入 `site_filters` 时 Builder 会记 `SITE_FILTER_UNSUPPORTED` 并跳过页面筛选；请同时写入 `hard_filters` 做文本硬筛。
+- `work_content`: 写入 `site_filters` 时 Builder 会记 `SITE_FILTER_UNSUPPORTED` 并跳过页面筛选；请同时写入 `hard_filters` 做文本硬筛。
 
-不要写入 `age_range`、`activity_recency`、`job_hop_frequency`。年龄、活跃度、跳槽频率不参与检索或硬筛。年龄要求已按 SKILL.md 转成 `experience_years` 的，只写年限字段。
+年龄、性别、活跃度、跳槽频率只用于站内缩小召回，不参与硬筛、评分或排序。这四项没有本地硬筛回退；页面操作失败时按 `unsupported_filters` 报告未验证，不得当作已满足。
 
 站内筛选只能使用猎聘支持的离散预设。Selector、控件定位、弹窗交互和取值标签由 Skill 渠道资产维护，计划中不得出现 Selector 或点击步骤。不要为了表达 `0-3 年` 等精确范围而选近似预设；把精确条件保留在 `hard_filters`。若站内工作年限不是受支持的预设，Builder 只会在 `hard_filters` 存在完全相同范围时移除该站内条件并返回 warning，否则拒绝计划。
 
-所有站内筛选都采用“失败后继续并上报”：某个字段的页面操作失败时跳过该字段、继续关键词搜索，并把字段、请求值和错误原因写入对应路径的 `search.<path>.unsupported_filters`。站内筛选只是缩小召回范围；同字段若属于硬条件，仍由后续卡片和详情 `data.filter` 执行。
+所有站内筛选都采用“失败后继续并上报”：某个字段的页面操作失败时跳过该字段、继续关键词搜索，并把字段、请求值和错误原因写入对应路径的 `search.<path>.unsupported_filters`。站内筛选只是缩小召回范围；同字段若属于硬条件，仍由后续卡片和详情 `data.filter` 执行。活跃度、跳槽频率、年龄、性别没有本地硬筛回退，失败记录的 `context.hard_filter_fallback` 为 false，必须说明条件未验证。
+
+### 活跃度与跳槽频率
+
+仅在用户明确指定时填写，不根据岗位名称、默认排除信号或模型偏好自行添加。“近 1 年内多次跳槽”与下面的站点预设含义不同，不能自动替换。
+
+| 字段 | 计划值 | 页面选项 |
+| --- | --- | --- |
+| `activity_recency` | `today` | 今天活跃 |
+| `activity_recency` | `within_3_days` | 3天内活跃 |
+| `activity_recency` | `within_7_days` | 7天内活跃 |
+| `activity_recency` | `within_30_days` | 30天内活跃 |
+| `activity_recency` | `within_3_months` | 最近三个月活跃 |
+| `activity_recency` | `within_6_months` | 最近半年活跃 |
+| `activity_recency` | `within_1_year` | 最近一年活跃 |
+| `job_hop_frequency` | `last_5_years_max_3` | 近5年不超过3段 |
+| `job_hop_frequency` | `last_3_years_max_2` | 近3年不超过2段 |
+| `job_hop_frequency` | `recent_2_jobs_min_2_years_each` | 近2段均不低于2年 |
+
+两项都是点选即提交的下拉筛选。Builder 在点击前校验筛选行、触发器、浮层和候选项均为唯一目标；点击后检查下拉收起、框内回显、已提交筛选标签和结果加载结束。人数不变或零结果都是有效表现。
+
+### 公司名称筛选
+
+公司名称使用行内联想输入。Builder 在“公司名称”筛选行内定位唯一 combobox，读取当前控件的 `aria-controls`（兼容 `aria-owns`），只在关联浮层内选择文本完全相同的唯一候选，再确认框内已选、点击行内确定并校验已提交筛选标签。不得固化 `#rc_select_x`、按视觉顺序猜控件或全页点击同名文本。
+
+`site_filters.company` 最多一个值。用户要求多家公司任一背景时，完整名单写入 `hard_filters.company` 并省略站内公司条件；只有明确限定单一公司时才缩小页面范围。
 
 ## 硬性过滤字段
 
