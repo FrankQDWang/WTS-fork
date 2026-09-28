@@ -176,6 +176,10 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" collect --ta
 
 没有第二路时多写 `"secondary": []` 与省略同等。本轮存在的路径必须填写。主路径最多 5 人、第二路最多 3 人，且不超过本轮计划上限；只选相应卡片结果中 matched/unknown 的编号，两路不重复。Builder 从结果恢复原计划，拒绝越界名单。collect 返回 `details.primary/secondary` 和 `failures.primary/secondary`；评分的 detail_ref 引用这次结果。
 
+collect 比对 search 返回的 list_state（页面地址、关键词、已提交筛选标签和页码）：一致时直接采集，变化或旧结果无快照时才在搜索页恢复原查询与筛选。每次点击前按 candidate_ref 重新定位，缺失或不唯一记入 failures，不按旧位置点人、不换人补位。
+
+搜索页不可用且 collect 尚未打开任何详情时，恢复登录/页面后可用原命令追加 `--restore-search`，显式导航并恢复搜索。正常采集不加此参数；已部分采集或效果未知时先对账，不能整批重跑。
+
 ## 扩张计划
 
 触发与挑人见 `seen-and-expand.md`。此处只规定字段。计划文件固定为：
@@ -217,7 +221,7 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 工作流按路径落盘，不要把两路结果混成一个无标记列表：
 
 - `summary.paths.primary` / `summary.paths.secondary`
-- `search.primary` / `search.secondary`
+- `search.primary` / `search.secondary`（含 list_state；由 Builder 自动捕获与消费，Agent 不手写快照）
 - `candidates.primary` / `candidates.secondary`
 - `details.primary` / `details.secondary`
 - `failures.primary` / `failures.secondary`

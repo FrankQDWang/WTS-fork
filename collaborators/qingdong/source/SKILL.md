@@ -193,7 +193,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 **播报**（执行前，必须预告）：本轮用哪几组词、大概几分钟、期间不会有新消息。例："第 2 轮开始，这轮用「AI Agent + LangGraph」和「AI Agent + RAG」两组词检索，预计 3–5 分钟，期间不会有新消息。"
 
-执行 browser_run_workflow 读取两路卡片。对照台账挑出未看的人，按 `references/seen-and-expand.md` 采集所选详情。每轮主路径最多采满上限（默认 5 人）、第二路最多 3 人，两路不重复。
+执行 browser_run_workflow 读取两路卡片。对照台账挑出未看的人，按 `references/seen-and-expand.md` 采集所选详情；collect 自动核对并复用列表，页面恢复边界见 `references/search-plan.md`「常规详情名单」。每轮主路径最多采满上限（默认 5 人）、第二路最多 3 人，两路不重复。
 
 **补搜**——search 返回后先数主路径**可采**人数：卡片硬筛为 matched/unknown、且不在已看台账里的人数。查询带了公司词、该公司不是硬条件、可采人数小于主路径上限 → 本轮必须补搜一次：
 

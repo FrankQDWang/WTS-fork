@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from pacing import pace_preflight, pace_search_path
+from collection import prepare_collection, snapshot_step
 from decision_basis import decision_receipt
 
 
@@ -1601,6 +1602,8 @@ def compile_path_steps(
     channel: dict[str, Any],
     interaction_mode: str = "direct",
     drop_step_ids: set[str] | None = None,
+    collection_context: dict[str, Any] | None = None,
+    restore_search: bool = False,
 ) -> list[dict[str, Any]]:
     generated = {
         "keyword_text": query,
@@ -1630,6 +1633,13 @@ def compile_path_steps(
         schemas=schemas_for_path(assets, path_name),
         workflows=assets["workflows"],
     )
+    search_step = next(step for step in steps if step["id"] == "search-and-extract-cards")
+    search_step["return"]["list_state"] = {"$ref": "search.list_state"}
+    if collection_context is not None:
+        steps = prepare_collection(steps, channel, schemas_for_path(assets, path_name)["card"],
+                                   collection_context, restore_search)
+    else:
+        search_step["program"].append(snapshot_step(channel))
     dropped = set(drop_step_ids or set())
     if max_details == 0:
         dropped |= {"collect-candidate-details", "detail-hard-filter"}
@@ -1666,6 +1676,7 @@ def build_emit_step(
             "query": path["query"],
             "unsupported_filters": {"$context": f"search_{name}.unsupported_filters"},
             "pages": {"$context": f"search_{name}.pages"},
+            "list_state": {"$context": f"search_{name}.list_state"},
         }
         candidates[name] = {"$context": f"card_filter_{name}"}
         details[name] = (
@@ -1758,7 +1769,8 @@ def plan_for_path(plan: dict[str, Any], path: str) -> dict[str, Any]:
 
 def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
                  selection: dict[str, list[str]] | None = None,
-                 source_plan: dict[str, Any] | None = None) -> dict[str, Any]:
+                 source_plan: dict[str, Any] | None = None,
+                 collection_context: dict[str, Any] | None = None) -> dict[str, Any]:
     if source_plan is None:
         plan, warnings = read_plan(args.plan_file)
         previous_plan = executed_plan(args, args.iteration - 1) if args.iteration > 1 else None
@@ -1829,6 +1841,8 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
                 plan=path_plan,
                 channel=channel,
                 interaction_mode=workflow["interaction_mode"],
+                collection_context=(collection_context or {}).get(path["name"]),
+                restore_search=getattr(args, "restore_search", False),
             )
         )
     steps.append(build_emit_step(paths))
@@ -1841,7 +1855,7 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
         "max_result_bytes": channel["limits"]["max_result_bytes"],
         "action_delay_ms": action_delay_ms,
         "max_step_executions": 5000,
-        "max_loop_iterations": 20,
+        "max_loop_iterations": 30,
         "max_extract_items": total_cards,
         "max_field_length": channel["limits"]["max_section_length"],
         "default_timeout_ms": channel["timing"]["search_timeout_ms"],
@@ -1938,7 +1952,13 @@ def build_collect(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str,
         selected[name] = refs
     collect_args = copy.copy(args)
     collect_args.interaction_mode = source["interaction_mode"]
-    workflow = build_search(collect_args, assets, selection=selected, source_plan=plan)
+    contexts = {}
+    for name in names:
+        contexts[name] = copy.deepcopy(result.get("data", {}).get("search", {}).get(name) or {})
+        contexts[name]["cards"] = [row for row in result.get("data", {}).get("candidates", {}).get(name, [])
+                                   if row.get("candidate_ref") in selected[name]]
+    workflow = build_search(collect_args, assets, selection=selected, source_plan=plan,
+                            collection_context=contexts)
     workflow["input_summary"]["card_result_ref"] = selection["result_ref"]
     if source.get("refill"):
         workflow["refill"] = True
@@ -2256,6 +2276,8 @@ def parse_args() -> argparse.Namespace:
         help=f"expand 专用：本轮第几次扩张，1-{MAX_EXPANSIONS_PER_ITERATION}",
     )
     parser.add_argument("--plan-file")
+    parser.add_argument("--restore-search", action="store_true",
+                        help="collect 页面不可用时显式恢复搜索页；正常采集不使用")
     parser.add_argument("--decision-file", help="settle 默认读取任务目录 wts/final-decision.json")
     parser.add_argument("--task-work-dir", default=os.environ.get("DEEPAGENT_TASK_WORK_DIR", ""))
     parser.add_argument("--store-root", default=os.environ.get("DEEPAGENT_WORKFLOW_STORE_DIR", ""))
@@ -2266,6 +2288,8 @@ def parse_args() -> argparse.Namespace:
         help="交互模式；省略时使用渠道资产的默认值",
     )
     args = parser.parse_args()
+    if args.restore_search and args.workflow_type != "collect":
+        parser.error("--restore-search 仅用于 collect")
     if not TASK_ID_PATTERN.fullmatch(args.task_id):
         parser.error("--task-id 仅支持 1-100 位字母、数字、点、下划线和短横线")
     if not 0 <= args.iteration <= 100:
