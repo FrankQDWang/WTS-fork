@@ -2114,7 +2114,7 @@ def executed_plan(args: argparse.Namespace, iteration: int) -> dict[str, Any]:
 
 
 def build_refill(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
-    """Release native company targeting; retain legacy query support for stored runs."""
+    """Release a company query token or a stored native company filter."""
     dropped = read_refill_plan(args.plan_file)
     if any(workflow.get("refill") for workflow in verified_workflows(args, args.iteration)):
         raise ValueError("同一轮只能补搜一次")
@@ -2128,7 +2128,7 @@ def build_refill(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
     tokens = plan["primary_query"].split()
     native_company = (plan.get("site_filters") or {}).get("company")
     if native_company != [dropped] and (native_company or dropped not in tokens):
-        raise ValueError("dropped_company 必须等于本轮原生公司条件或旧计划的完整公司词")
+        raise ValueError("dropped_company 必须等于本轮原生公司条件或主路径的完整公司词")
     hard_companies = (plan.get("hard_filters") or {}).get("company") or []
     if hard_companies == [dropped]:
         raise ValueError("该公司是硬性条件，不能去掉后再搜")

@@ -24,7 +24,7 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `requirement_version` | string | 从第 1 轮起填写已确认需求版本；同版本条件保持一致 |
-| `primary_query` | string | 必填，1-50 字符；主路径自然语言查询，不使用 `OR`、`AND`、`NOT`。只写锚点和支持词；公司走原生筛选（SKILL.md 步骤 3.5） |
+| `primary_query` | string | 必填，1-50 字符；主路径自然语言查询，不使用 `OR`、`AND`、`NOT`。锚点 + 支持词 + 可选公司词（SKILL.md 步骤 3.5） |
 | `secondary_query` | string | 可选；第二路自然语言查询，只含锚点和支持词。第 1 轮禁止出现 |
 | `site_filters` | object | 猎聘页面可直接设置的筛选条件 |
 | `hard_filters` | object | Builder 将其编译为通用 `data.filter` 谓词；先做卡片预筛，再做详情终筛 |
@@ -60,7 +60,6 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
   - 用户写明只要某一档时，两边都只写那一档。
   - 站内最多两个值。可用值：本科、硕士、博士/博士后、大专、中专/中技、高中及以下。
 - `school_requirements`: 最多一个值，支持 `211`、`985`、`double_first_class`、`overseas`。
-- `company`: 最多一个公司名称的字符串数组，例如 `["字节"]`。按公司池顺序选取本轮目标；作为公司硬条件时必须有 JD 或用户明确要求。
 - `activity_recency`、`job_hop_frequency`: 单个预设字符串，见下方映射；按澄清答案填写，选择不限时省略。
 - `age_range`: `{min,max}` 整数对象，边界为 16–60，至少给一个边界；仅用于站内筛选，不得写入 `hard_filters`。
 - `gender`: 单个值，支持 `male`、`female`、`男`、`女`；仅用于站内筛选，不得写入 `hard_filters`。
@@ -102,11 +101,9 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 
 两项都是点选即提交的下拉筛选。Builder 在点击前校验筛选行、触发器、浮层和候选项均为唯一目标；点击后检查下拉收起、框内回显、已提交筛选标签和结果加载结束。人数不变或零结果都是有效表现。
 
-### 公司名称筛选
+### 公司词
 
-公司名称使用行内联想输入。Builder 先在“公司名称”行点击可见的“搜索公司”控件，再等待并定位唯一 combobox，读取当前控件的 `aria-controls`（兼容 `aria-owns`），只在关联浮层内选择文本完全相同的唯一候选，再确认框内已选、点击行内确定并校验已提交筛选标签。不得固化 `#rc_select_x`、按视觉顺序猜控件或全页点击同名文本。
-
-`site_filters.company` 最多一个值。公司池的本轮定向仅用于主路径，探索路径移除它；若与 `hard_filters.company` 的唯一公司相同，则两路都保留，且不可补搜放宽。多公司硬条件保留完整 OR 名单，本轮可从中选一家定向；探索和补搜仍保留完整硬条件。
+按 SKILL.md 步骤 3.5 把本轮公司词加入 primary_query；site_filters 省略 company，第二路不带公司词。明确要求的公司任职背景单独写入 hard_filters.company，关键词命中不作为任职证明。
 
 ## 硬性过滤字段
 
@@ -146,7 +143,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" refill --tas
 { "dropped_company": "实在智能" }
 ```
 
-Builder 校验：本轮已有 search 卡片结果；可采人数大于 0 时先采集，已够额则拒绝补搜。`dropped_company` 必须等于原 `site_filters.company` 的单一值；若为唯一公司硬条件则拒绝。补搜移除原生公司定向，关键词及所有硬条件不变，只走主路径、只出卡片，每轮最多一次。旧任务的公司关键词计划仍可恢复；新计划使用原生字段。
+Builder 校验：本轮已有 search 卡片结果；可采人数大于 0 时先采集，已够额则拒绝补搜。`dropped_company` 必须逐字等于主路径中的完整公司词（按空格分词）；公司词属于 hard_filters.company 时拒绝。补搜只移除该公司词，其他关键词和全部硬条件不变，只走主路径、只出卡片，每轮最多一次。
 
 第二次采集路径：`<TASK_WORK_DIR>/wts/search-plans/iteration-N-refill-collect.json`，命令仍是 `collect --iteration N`。只填 `result_ref` 和 `primary`；`result_ref` 必须是这次补搜的卡片结果。名单长度不得超过「主路径上限 − 本轮主路径已采集数」。
 
@@ -192,10 +189,10 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `requirement_version` | string | 与本轮 iteration-N.json 相同 |
-| `source_path` | string | primary / secondary / refill；原计划有原生公司筛选时必填，区分关键词相同但筛选不同的原搜索与补搜 |
+| `source_path` | string | primary / secondary / refill；填写实际来源路径，Builder 核对该路查询与筛选 |
 | `query` | string | 必填；必须逐字等于本轮已执行的 `primary_query`、`secondary_query` 或补搜后的主路径查询，扩张只重开同一页 |
 | `include_candidate_refs` | string[] | 必填，1-30 个、不重复；Agent 从该路 `candidates.<path>` 卡片里挑出要打开的人。Builder 编译为卡片谓词 `selected_for_expansion`：不在名单内即 reject；详情预算 = 名单长度 |
-| `site_filters` | object | 照抄来源路径实际筛选；探索/补搜移除公司定向，保留唯一公司硬条件；Builder 核对 source_path |
+| `site_filters` | object | 照抄来源路径实际筛选；公司词在 query 中，site_filters 省略 company |
 | `hard_filters` | object | 照抄本轮计划；与已执行计划不一致即拒绝编译 |
 | `semantic_criteria` | object | 照抄本轮计划；与已执行计划不一致即拒绝编译 |
 | `action_delay_ms` | integer | 同搜索计划 |
@@ -231,14 +228,13 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 
 以下展示查询与条件；实际计划还须填写 requirement_version，第 2 轮另附真实上一轮 decision_basis。
 
-第 1 轮只有主路径（主锚点 + 2 支持词，原生公司筛选单独设置）：
+第 1 轮只有主路径（主锚点 + 2 支持词 + 1 公司词）：
 
 ```json
 {
-  "primary_query": "AI Agent LangGraph RAG",
+  "primary_query": "AI Agent LangGraph RAG 阿里巴巴",
   "site_filters": {
     "expected_cities": ["上海"],
-    "company": ["阿里巴巴"],
     "activity_recency": "within_7_days"
   },
   "hard_filters": {
@@ -254,15 +250,14 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 }
 ```
 
-第 2 轮主路径（第 1 轮召回少，Agent 减到 1 支持词并换公司筛选）+ 第二路：
+第 2 轮主路径（第 1 轮召回少，Agent 减到 1 支持词并换公司词）+ 第二路：
 
 ```json
 {
-  "primary_query": "AI Agent LangGraph",
+  "primary_query": "AI Agent LangGraph 字节跳动",
   "secondary_query": "AI Agent RAG",
   "site_filters": {
     "expected_cities": ["上海"],
-    "company": ["字节跳动"],
     "activity_recency": "within_7_days"
   },
   "hard_filters": {
