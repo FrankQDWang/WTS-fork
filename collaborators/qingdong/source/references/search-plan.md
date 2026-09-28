@@ -24,7 +24,7 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `requirement_version` | string | 从第 1 轮起填写已确认需求版本；同版本条件保持一致 |
-| `primary_query` | string | 必填，1-50 字符；主路径自然语言查询，不使用 `OR`、`AND`、`NOT`。可含 1 个公司词（SKILL.md 步骤 3.5） |
+| `primary_query` | string | 必填，1-50 字符；主路径自然语言查询，不使用 `OR`、`AND`、`NOT`。只写锚点和支持词；公司走原生筛选（SKILL.md 步骤 3.5） |
 | `secondary_query` | string | 可选；第二路自然语言查询，只含锚点和支持词。第 1 轮禁止出现 |
 | `site_filters` | object | 猎聘页面可直接设置的筛选条件 |
 | `hard_filters` | object | Builder 将其编译为通用 `data.filter` 谓词；先做卡片预筛，再做详情终筛 |
@@ -60,8 +60,8 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
   - 用户写明只要某一档时，两边都只写那一档。
   - 站内最多两个值。可用值：本科、硕士、博士/博士后、大专、中专/中技、高中及以下。
 - `school_requirements`: 最多一个值，支持 `211`、`985`、`double_first_class`、`overseas`。
-- `company`: 最多一个公司名称的字符串数组，例如 `["字节"]`。只使用用户已确认的名称；多公司 OR 名单保留在 `hard_filters.company`，不要擅自挑第一家公司缩小召回。
-- `activity_recency`、`job_hop_frequency`: 单个预设字符串，见下方映射；只在用户明确指定时填写，未指定或不限时省略。
+- `company`: 最多一个公司名称的字符串数组，例如 `["字节"]`。按公司池顺序选取本轮目标；作为公司硬条件时必须有 JD 或用户明确要求。
+- `activity_recency`、`job_hop_frequency`: 单个预设字符串，见下方映射；按澄清答案填写，选择不限时省略。
 - `age_range`: `{min,max}` 整数对象，边界为 16–60，至少给一个边界；仅用于站内筛选，不得写入 `hard_filters`。
 - `gender`: 单个值，支持 `male`、`female`、`男`、`女`；仅用于站内筛选，不得写入 `hard_filters`。
 
@@ -75,9 +75,17 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 
 所有站内筛选都采用“失败后继续并上报”：某个字段的页面操作失败时跳过该字段、继续关键词搜索，并把字段、请求值和错误原因写入对应路径的 `search.<path>.unsupported_filters`。站内筛选只是缩小召回范围；同字段若属于硬条件，仍由后续卡片和详情 `data.filter` 执行。活跃度、跳槽频率、年龄、性别没有本地硬筛回退，失败记录的 `context.hard_filter_fallback` 为 false，必须说明条件未验证。
 
+### 筛选澄清
+
+步骤 3 用同一次 `request_user_input`（step_id=clarify-jd）的两道单选题展示活跃度和跳槽频率卡片，allow_custom=false。活跃度 prompt="希望候选人最近多久活跃？"，跳槽频率 prompt="对跳槽频率有什么要求？"。已有明确站点条件的题可跳过；其余必须展示卡片并等待选择。推荐只标在 label 前缀，recommended=false，用户选择后才写入计划，普通文字或推荐标记不算答案。
+
+- **活跃度**：不限、今天活跃、3天内活跃、[推荐] 7天内活跃、30天内活跃、最近三个月活跃、最近半年活跃、最近一年活跃。共 8 项；选不限时省略字段。
+- **跳槽频率**：[推荐] 不限、近5年不超过3段、近3年不超过2段、近2段均不低于2年。共 4 项；选不限时省略字段。
+- **年龄、性别**：仅采用 JD 或用户明确要求；未要求则省略字段、不主动询问。明确数字/性别直接记录；模糊表达或超出支持范围时再澄清，不从岗位或学历推断，也不把年龄换算为年限。
+
 ### 活跃度与跳槽频率
 
-仅在用户明确指定时填写，不根据岗位名称、默认排除信号或模型偏好自行添加。“近 1 年内多次跳槽”与下面的站点预设含义不同，不能自动替换。
+按澄清卡片答案选择下面的站点预设；选择不限时省略字段。
 
 | 字段 | 计划值 | 页面选项 |
 | --- | --- | --- |
@@ -98,7 +106,7 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 
 公司名称使用行内联想输入。Builder 在“公司名称”筛选行内定位唯一 combobox，读取当前控件的 `aria-controls`（兼容 `aria-owns`），只在关联浮层内选择文本完全相同的唯一候选，再确认框内已选、点击行内确定并校验已提交筛选标签。不得固化 `#rc_select_x`、按视觉顺序猜控件或全页点击同名文本。
 
-`site_filters.company` 最多一个值。用户要求多家公司任一背景时，完整名单写入 `hard_filters.company` 并省略站内公司条件；只有明确限定单一公司时才缩小页面范围。
+`site_filters.company` 最多一个值。公司池的本轮定向仅用于主路径，探索路径移除它；若与 `hard_filters.company` 的唯一公司相同，则两路都保留，且不可补搜放宽。多公司硬条件保留完整 OR 名单，本轮可从中选一家定向；探索和补搜仍保留完整硬条件。
 
 ## 硬性过滤字段
 
@@ -138,7 +146,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" refill --tas
 { "dropped_company": "实在智能" }
 ```
 
-Builder 校验：本轮已有 search 卡片结果；可采人数大于 0 时必须已经采集过；可采人数已达主路径上限则拒绝；`dropped_company` 是原 `primary_query` 里的一个完整词，且不在 `hard_filters.company`；新查询 = 去掉该词后的主路径，长度仍 1–50；只编主路径、只出卡片；同一轮只能一次。`executed_plan` 跳过补搜工作流，下一轮仍对账原计划的硬条件。
+Builder 校验：本轮已有 search 卡片结果；可采人数大于 0 时先采集，已够额则拒绝补搜。`dropped_company` 必须等于原 `site_filters.company` 的单一值；若为唯一公司硬条件则拒绝。补搜移除原生公司定向，关键词及所有硬条件不变，只走主路径、只出卡片，每轮最多一次。旧任务的公司关键词计划仍可恢复；新计划使用原生字段。
 
 第二次采集路径：`<TASK_WORK_DIR>/wts/search-plans/iteration-N-refill-collect.json`，命令仍是 `collect --iteration N`。只填 `result_ref` 和 `primary`；`result_ref` 必须是这次补搜的卡片结果。名单长度不得超过「主路径上限 − 本轮主路径已采集数」。
 
@@ -184,9 +192,10 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `requirement_version` | string | 与本轮 iteration-N.json 相同 |
+| `source_path` | string | primary / secondary / refill；原计划有原生公司筛选时必填，区分关键词相同但筛选不同的原搜索与补搜 |
 | `query` | string | 必填；必须逐字等于本轮已执行的 `primary_query`、`secondary_query` 或补搜后的主路径查询，扩张只重开同一页 |
 | `include_candidate_refs` | string[] | 必填，1-30 个、不重复；Agent 从该路 `candidates.<path>` 卡片里挑出要打开的人。Builder 编译为卡片谓词 `selected_for_expansion`：不在名单内即 reject；详情预算 = 名单长度 |
-| `site_filters` | object | 照抄本轮计划 |
+| `site_filters` | object | 照抄来源路径实际筛选；探索/补搜移除公司定向，保留唯一公司硬条件；Builder 核对 source_path |
 | `hard_filters` | object | 照抄本轮计划；与已执行计划不一致即拒绝编译 |
 | `semantic_criteria` | object | 照抄本轮计划；与已执行计划不一致即拒绝编译 |
 | `action_delay_ms` | integer | 同搜索计划 |
@@ -196,7 +205,7 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 ```json
 {
   "requirement_version": "v1",
-  "query": "AI Agent LangGraph RAG 阿里巴巴",
+  "query": "AI Agent LangGraph RAG",
   "include_candidate_refs": ["liepin:a1b2c3d4e5", "liepin:f6g7h8i9j0"],
   "site_filters": {"expected_cities": ["上海"]},
   "hard_filters": {"expected_cities": ["上海"], "required_keyword_groups": [["AI Agent"]]},
@@ -220,13 +229,15 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 
 ## 示例
 
-第 1 轮只有主路径（主锚点 + 2 支持词 + 公司词）：
+第 1 轮只有主路径（主锚点 + 2 支持词，原生公司筛选单独设置）：
 
 ```json
 {
-  "primary_query": "AI Agent LangGraph RAG 阿里巴巴",
+  "primary_query": "AI Agent LangGraph RAG",
   "site_filters": {
-    "expected_cities": ["上海"]
+    "expected_cities": ["上海"],
+    "company": ["阿里巴巴"],
+    "activity_recency": "within_7_days"
   },
   "hard_filters": {
     "expected_cities": ["上海"],
@@ -241,14 +252,16 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 }
 ```
 
-第 2 轮主路径（第 1 轮召回少，Agent 减到 1 支持词并换公司词）+ 第二路：
+第 2 轮主路径（第 1 轮召回少，Agent 减到 1 支持词并换公司筛选）+ 第二路：
 
 ```json
 {
-  "primary_query": "AI Agent LangGraph 字节跳动",
+  "primary_query": "AI Agent LangGraph",
   "secondary_query": "AI Agent RAG",
   "site_filters": {
-    "expected_cities": ["上海"]
+    "expected_cities": ["上海"],
+    "company": ["字节跳动"],
+    "activity_recency": "within_7_days"
   },
   "hard_filters": {
     "expected_cities": ["上海"]

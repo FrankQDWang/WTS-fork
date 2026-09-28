@@ -65,6 +65,8 @@
 
 扩张上限：今天打开的详情 ≥ 60 份时停止扩张。任务上下文给出数字时用那个数字。50 份是开始前的确认线，60 份是扩张时的停止线。
 
+扩张计划按 `references/search-plan.md` 填写来源路径 `source_path` 与该路径实际筛选，区分原搜索和补搜；关键词相同不代表公司条件相同。
+
 ## 先挑人，再开详情
 
 search 只读卡片，不开详情。Agent 用 browser_read_workflow_result 读完 `candidates.primary` 和存在的 `candidates.secondary`（有 next_offset 就继续），按 candidate_ref 对照台账去重，排除 rejected，两路间也去重；从剩余卡片挑选主路径最多 5 人、第二路最多 3 人。不要因为某人被跳过就新增台账记录。

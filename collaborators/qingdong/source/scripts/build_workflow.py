@@ -125,6 +125,7 @@ ALLOWED_PLAN_KEYS = {
 }
 ALLOWED_REFILL_PLAN_KEYS = {"dropped_company"}
 ALLOWED_EXPAND_PLAN_KEYS = {
+    "source_path",
     "requirement_version",
     "query",
     "include_candidate_refs",
@@ -280,6 +281,11 @@ def normalize_plan(plan: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str,
         site_filters["company"] = normalize_string_list(
             site_filters["company"], "site_filters.company", maximum=1
         )
+
+    companies = site_filters.get("company") or []
+    hard_companies = hard_filters.get("company") or []
+    if companies and hard_companies and companies[0] not in hard_companies:
+        raise ValueError("原生公司定向必须来自公司硬条件名单")
 
     for field, allowed in (
         ("activity_recency", ACTIVITY_RECENCY),
@@ -596,6 +602,9 @@ def read_expand_plan(plan_path: str) -> tuple[dict[str, Any], list[dict[str, str
     version = plan.get("requirement_version", "v1")
     if not isinstance(version, str) or not version.strip() or len(version) > 80:
         raise ValueError("requirement_version 必须是 1-80 字符的已确认需求版本")
+    source_path = plan.get("source_path")
+    if source_path not in (None, "primary", "secondary", "refill"):
+        raise ValueError("source_path 必须是 primary、secondary 或 refill")
     query = normalize_query(plan.get("query"), "query")
     include_refs = normalize_candidate_refs(
         plan.get("include_candidate_refs"),
@@ -616,6 +625,7 @@ def read_expand_plan(plan_path: str) -> tuple[dict[str, Any], list[dict[str, str
         {
             "requirement_version": version.strip(),
             "query": query,
+            "source_path": source_path,
             "include_candidate_refs": include_refs,
             "site_filters": normalized["site_filters"],
             "hard_filters": normalized["hard_filters"],
@@ -1727,6 +1737,16 @@ def build_preflight(args: argparse.Namespace, assets: dict[str, Any]) -> dict[st
     return workflow
 
 
+def plan_for_path(plan: dict[str, Any], path: str) -> dict[str, Any]:
+    """Company-pool targeting is primary-only; explicit company requirements persist."""
+    effective = copy.deepcopy(plan)
+    company = (effective.get("site_filters") or {}).get("company")
+    hard_companies = (effective.get("hard_filters") or {}).get("company") or []
+    if company and path != "primary" and company != hard_companies:
+        effective["site_filters"].pop("company")
+    return effective
+
+
 def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
                  selection: dict[str, list[str]] | None = None,
                  source_plan: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1759,7 +1779,6 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
         field for field, value in site_filters.items() if value not in (None, [], "")
     }
     hard_site_filter_fields = sorted(site_filter_fields & set(hard_filters))
-    site_filter_program = compile_site_filter_program(plan, channel, action_delay_ms)
     card_predicates = compile_predicates(hard_filters, "card")
     detail_predicates = compile_predicates(hard_filters, "detail")
     paths = [
@@ -1783,6 +1802,7 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
     for path in paths:
         if selection is not None and not selection[path["name"]]:
             continue
+        path_plan = plan_for_path(plan, path["name"])
         steps.extend(
             compile_path_steps(
                 path_name=path["name"],
@@ -1790,14 +1810,14 @@ def build_search(args: argparse.Namespace, assets: dict[str, Any], *,
                 max_cards=path["max_cards"],
                 max_details=path["max_details"],
                 action_delay_ms=action_delay_ms,
-                site_filter_program=site_filter_program,
+                site_filter_program=compile_site_filter_program(path_plan, channel, action_delay_ms),
                 card_predicates=card_predicates + (
                     [candidate_ref_predicate(selection[path["name"]])]
                     if selection is not None and selection[path["name"]] else []
                 ),
                 detail_predicates=detail_predicates,
                 assets=assets,
-                plan=plan,
+                plan=path_plan,
                 channel=channel,
                 interaction_mode=workflow["interaction_mode"],
             )
@@ -1938,6 +1958,21 @@ def build_expand(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
         if plan.get(key) != base_plan.get(key):
             changed = changed_fields_summary(base_plan.get(key) or {}, plan.get(key) or {}, key)
             raise ValueError(f"扩张不能改变本轮条件：{', '.join(changed)}；请照抄 iteration-{args.iteration}.json")
+    source_path = plan.get("source_path")
+    if (base_plan.get("site_filters") or {}).get("company") and source_path is None:
+        raise ValueError("原生公司筛选的扩张必须指定 source_path，区分原搜索和补搜")
+    if source_path is not None:
+        if source_path == "refill":
+            pair = latest_completed(args, args.iteration, is_refill_cards)
+            if not pair:
+                raise ValueError("本轮没有已完成的补搜卡片结果")
+            expected = pair[0]["input_plan"]
+            expected_query = expected["primary_query"]
+        else:
+            expected = plan_for_path(base_plan, source_path)
+            expected_query = base_plan.get(source_path + "_query")
+        if plan["query"] != expected_query or plan["site_filters"] != expected["site_filters"]:
+            raise ValueError("扩张的 query 和 site_filters 必须与 source_path 的实际搜索一致")
     channel = assets["channel"]
     template = assets["workflows"]["search"]
     workflow = base_workflow(args, template, channel)
@@ -2070,7 +2105,7 @@ def executed_plan(args: argparse.Namespace, iteration: int) -> dict[str, Any]:
 
 
 def build_refill(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, Any]:
-    """In-round refill: drop the company word and search the primary path again."""
+    """Release native company targeting; retain legacy query support for stored runs."""
     dropped = read_refill_plan(args.plan_file)
     if any(workflow.get("refill") for workflow in verified_workflows(args, args.iteration)):
         raise ValueError("同一轮只能补搜一次")
@@ -2082,10 +2117,11 @@ def build_refill(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
     if not isinstance(plan.get("primary_query"), str):
         raise ValueError("本轮搜索计划缺少 primary_query，不能补搜")
     tokens = plan["primary_query"].split()
-    if dropped not in tokens:
-        raise ValueError("dropped_company 必须是本轮主路径查询里的一个完整词")
+    native_company = (plan.get("site_filters") or {}).get("company")
+    if native_company != [dropped] and (native_company or dropped not in tokens):
+        raise ValueError("dropped_company 必须等于本轮原生公司条件或旧计划的完整公司词")
     hard_companies = (plan.get("hard_filters") or {}).get("company") or []
-    if dropped in hard_companies:
+    if hard_companies == [dropped]:
         raise ValueError("该公司是硬性条件，不能去掉后再搜")
     eligible = eligible_primary_count(result, seen_candidate_refs(args))
     limit = (plan.get("limits") or {}).get("primary_max_details", PRIMARY_DETAIL_BUDGET)
@@ -2094,10 +2130,14 @@ def build_refill(args: argparse.Namespace, assets: dict[str, Any]) -> dict[str, 
     if eligible > 0 and not latest_completed(args, args.iteration, is_original_collect):
         raise ValueError("可采人数大于 0 时先采集这些人，再补搜")
     refill_plan = copy.deepcopy(plan)
-    refill_plan["primary_query"] = normalize_query(
-        " ".join(token for token in tokens if token != dropped),
-        "primary_query",
-    )
+    if native_company:
+        refill_plan["site_filters"].pop("company")
+    else:
+        if dropped in hard_companies:
+            raise ValueError("该公司是硬性条件，不能去掉后再搜")
+        refill_plan["primary_query"] = normalize_query(
+            " ".join(token for token in tokens if token != dropped), "primary_query"
+        )
     refill_plan.pop("secondary_query", None)
     refill_plan["limits"] = normalize_search_limits(refill_plan.get("limits"), has_secondary=False)
     refill_args = copy.copy(args)
@@ -2194,7 +2234,7 @@ def settle_search(args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="WTS：preflight 登录前置；search 读取卡片；collect 采集所选详情；refill 去掉公司词补搜；expand 轮内扩张；settle 结算最后已完成轮次",
+        description="WTS：preflight 登录前置；search 读取卡片；collect 采集所选详情；refill 放宽公司定向补搜；expand 轮内扩张；settle 结算最后已完成轮次",
         epilog="没有 reflect 子命令。settle --iteration N 使用最后已完成轮次 N，不是 N+1。expand 和 refill 附属于当前轮，不新增轮次。",
     )
     parser.add_argument("workflow_type", choices=["preflight", "search", "collect", "refill", "expand", "settle"])
