@@ -69,7 +69,7 @@ Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`�
 
 - `work_content`: 写入 `site_filters` 时 Builder 会记 `SITE_FILTER_UNSUPPORTED` 并跳过页面筛选；请同时写入 `hard_filters` 做文本硬筛。
 
-年龄、性别、活跃度、跳槽频率只用于站内缩小召回，不参与硬筛、评分或排序。这四项没有本地硬筛回退；页面操作失败时按 `unsupported_filters` 报告未验证，不得当作已满足。
+年龄、性别、活跃度、跳槽频率只用于站内缩小召回，不参与硬筛、评分或排序。
 
 站内筛选只能使用猎聘支持的离散预设。Selector、控件定位、弹窗交互和取值标签由 Skill 渠道资产维护，计划中不得出现 Selector 或点击步骤。不要为了表达 `0-3 年` 等精确范围而选近似预设；把精确条件保留在 `hard_filters`。若站内工作年限不是受支持的预设，Builder 只会在 `hard_filters` 存在完全相同范围时移除该站内条件并返回 warning，否则拒绝计划。
 
@@ -124,7 +124,7 @@ search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详�
 
 卡片上能够明确读到的城市、学历、工作年限等字段可以直接淘汰不符合者。列表摘要没有出现关键词、院校标签或其他可能被页面折叠的信息时只记为 `unknown`，不得提前淘汰。Builder 为卡片和详情分别生成声明式谓词；通用浏览器不理解招聘字段。
 
-用户或 JD 明确声明为硬性的站内条件必须同步写入 `hard_filters`。不要假设站内筛选等同于最终硬筛。
+用户或 JD 明确声明的硬条件，在上述支持字段范围内同步写入 `hard_filters`；四类仅站内偏好除外。不要假设站内筛选等同于最终硬筛。
 
 ## 补搜计划
 
@@ -140,7 +140,7 @@ search 执行两路查询、站内筛选和卡片硬筛后返回，不打开详�
 python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" refill --task-id TASK_ID --iteration N --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N-refill.json"
 ```
 
-只填一个字段，其余从本轮已执行的 search 计划抄：
+只填一个字段；其余由 Builder 从本轮已执行的 search 计划恢复：
 
 ```json
 { "dropped_company": "实在智能" }
@@ -229,6 +229,8 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 
 ## 示例
 
+以下展示查询与条件；实际计划还须填写 requirement_version，第 2 轮另附真实上一轮 decision_basis。
+
 第 1 轮只有主路径（主锚点 + 2 支持词，原生公司筛选单独设置）：
 
 ```json
@@ -264,7 +266,9 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
     "activity_recency": "within_7_days"
   },
   "hard_filters": {
-    "expected_cities": ["上海"]
+    "expected_cities": ["上海"],
+    "education": ["本科", "硕士", "博士/博士后"],
+    "required_keyword_groups": [["AI Agent"], ["LangGraph", "LangChain"]]
   },
   "semantic_criteria": {
     "must_have": ["有大模型应用或 Agent 落地经历"],
