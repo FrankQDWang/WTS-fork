@@ -49,7 +49,7 @@ class CompanyKeywordTests(unittest.TestCase):
         self.assertEqual(refill['input_plan']['primary_query'], 'AI Agent RAG Prompt')
         self.assertEqual(refill['input_plan']['hard_filters'], hard)
         self.assertEqual(refill['input_plan']['site_filters'], self.plan['site_filters'])
-        self.assertIn('同一轮', self.call('refill', 'iteration-1-refill.json', ok=False)['error'])
+        self.assertIn('状态未确认', self.call('refill', 'iteration-1-refill.json', ok=False)['error'])
 
     def test_company_hard_requirement_cannot_be_dropped(self):
         workflow, _ = self.keyword_search({'company': ['DeepSeek']})
@@ -67,7 +67,7 @@ class CompanyKeywordTests(unittest.TestCase):
         self.assert_no_company_control(two_paths)
         self.assertNotIn('DeepSeek', json.dumps([s for s in two_paths['steps'] if s['id'].startswith('secondary-')]))
         refill = self.call('refill', 'iteration-1-refill.json')
-        self.result(refill, {'candidates': {'primary': []}})
+        self.result(refill, {'candidates': {'primary': [{'candidate_ref': 'liepin:new000001', 'card_hard_filter_status': 'unknown'}]}})
         expansion = {k: copy.deepcopy(workflow['input_plan'][k]) for k in
                      ('requirement_version', 'site_filters', 'hard_filters', 'semantic_criteria')}
         expansion.update(source_path='refill', query='AI Agent RAG Prompt', include_candidate_refs=['liepin:new000001'])

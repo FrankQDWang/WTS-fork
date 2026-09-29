@@ -17,7 +17,7 @@ class CollectResumeTests(unittest.TestCase):
         self.assertFalse(any(s['action'] == 'page.navigate' for s in workflow['steps']))
         program = next(s['program'] for s in workflow['steps'] if s['action'] == 'page.run')
         self.assertFalse(any(s['op'] in ('page.fill', 'page.click') for s in program))
-        self.assertTrue(any(s['id'] == 'primary-restore-search-if-changed' for s in program))
+        self.assertTrue(any(s['id'] == 'primary-check-collection-state' for s in program))
 
     def collect_with_snapshot(self, page="1"):
         snapshot = {'url': 'https://h.liepin.com/search/getConditionItem',
@@ -33,7 +33,7 @@ class CollectResumeTests(unittest.TestCase):
     def test_no_pagination_snapshot_is_reusable(self):
         _, workflow = self.collect_with_snapshot(page=None)
         program = next(s['program'] for s in workflow['steps'] if s['action'] == 'page.run')
-        gate = next(s for s in program if s['id'] == 'primary-restore-search-if-changed')
+        gate = next(s for s in program if s['id'] == 'primary-check-collection-state')
         self.assertIsInstance(gate['condition'], dict,
                               'Session 64: absent pagination must not force a new search')
         page = next(c for c in gate['condition']['all'] if c['path'] == 'search.list_state.page')
@@ -43,7 +43,8 @@ class CollectResumeTests(unittest.TestCase):
         self.assertIn('capture-list-state', json.dumps(self.card_workflow))
         _, workflow = self.collect_with_snapshot()
         self.assertFalse(any(s['action'] == 'page.navigate' for s in workflow['steps']))
-        restored = self.call('collect', 'iteration-1-collect.json', extra=('--restore-search',))
+        self.result(workflow, {'search': {'primary': {'collection_check': {'status': 'needs_restore'}}}})
+        restored = self.call('collect', 'iteration-1-collect.json', extra=('--restore-search', '--recovery-reason', '页面已变化'))
         self.assertTrue(any(s['action'] == 'page.navigate' for s in restored['steps']))
         self.assertEqual(restored['input_summary']['selection'], workflow['input_summary']['selection'])
         import subprocess
@@ -61,11 +62,14 @@ class CollectResumeTests(unittest.TestCase):
         if not (runtime / 'content.js').exists() or not shutil.which('node'):
             self.skipTest('Installed Domi page interpreter and Node required for host compatibility check')
         for page in ("1", None):
+            for p in (self.root / 'workflow-store/test-task').glob('*.json'):
+                if json.loads(p.read_text()).get('input_summary', {}).get('stage') == 'details':
+                    p.unlink()
             snapshot, workflow = self.collect_with_snapshot(page=page)
             program = next(s['program'] for s in workflow['steps'] if s['action'] == 'page.run')
-            gate = next(s for s in program if s['id'] == 'primary-restore-search-if-changed')
-            self.assertEqual(gate['then'], [])
-            self.assertIn('primary-fill-keyword', json.dumps(gate['else']))
+            gate = next(s for s in program if s['id'] == 'primary-check-collection-state')
+            self.assertIn('needs_restore', json.dumps(gate['else']))
+            self.assertNotIn('fill-keyword', json.dumps(program))
             opening = next(s['open'] for s in workflow['steps'] if s['action'] == 'tabs.foreach')
             suffixes = ('remember-selected-candidate', 'initialize-identity-matches',
                         'locate-selected-candidate', 'require-unique-selected-candidate')
@@ -77,13 +81,13 @@ class CollectResumeTests(unittest.TestCase):
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertIn('4 candidate-identity cases passed', run.stdout)
 
-    def test_legacy_result_restores_search_but_keeps_selection(self):
+    def test_legacy_result_reports_missing_snapshot_without_search(self):
         self.write('iteration-1-collect.json', {'result_ref': self.card_ref, 'primary': ['liepin:new000001']})
         workflow = self.call('collect', 'iteration-1-collect.json')
         program = next(s['program'] for s in workflow['steps'] if s['action'] == 'page.run')
-        gate = next(s for s in program if s['id'] == 'primary-restore-search-if-changed')
+        gate = next(s for s in program if s['id'] == 'primary-check-collection-state')
         self.assertIs(gate['condition'], False)
-        cards = next(s['value'] for s in program if s['id'] == 'primary-restore-selected-cards')
+        cards = next(s['value'] for s in gate['then'] if s['id'] == 'primary-restore-selected-cards')
         self.assertEqual([r['candidate_ref'] for r in cards], ['liepin:new000001'])
 
     def test_refill_collection_reuses_its_own_snapshot(self):
@@ -104,7 +108,7 @@ class CollectResumeTests(unittest.TestCase):
         workflow = self.call('collect', 'iteration-1-refill-collect.json')
         self.assertTrue(workflow['refill'])
         program = next(s['program'] for s in workflow['steps'] if s['action'] == 'page.run')
-        gate = next(s for s in program if s['id'] == 'primary-restore-search-if-changed')
+        gate = next(s for s in program if s['id'] == 'primary-check-collection-state')
         query = next(c['value'] for c in gate['condition']['all'] if c['path'] == 'search.list_state.query')
         self.assertEqual(query, 'Agent RAG')
         self.assertNotIn('DeepSeek', json.dumps(gate))
@@ -140,7 +144,7 @@ print(json.dumps(builder.build_search(a,builder.load_assets(),selection=v['selec
         workflow = json.loads(run.stdout)
         for name in selected:
             program = next(s['program'] for s in workflow['steps'] if s['id'] == name + '-search-and-extract-cards')
-            gate = next(s for s in program if s['id'] == name + '-restore-search-if-changed')
+            gate = next(s for s in program if s['id'] == name + '-check-collection-state')
             query = next(c['value'] for c in gate['condition']['all'] if c['path'] == 'search.list_state.query')
             self.assertEqual(query, plan[name + '_query'])
         self.assertFalse(any(s['action'] == 'page.navigate' for s in workflow['steps']))

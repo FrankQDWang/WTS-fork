@@ -187,38 +187,38 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" search --tas
 
 校验失败时按具体报错修正同一个 `iteration-N.json` 后重新编译；有可执行的修正就继续，无法修正时说明阻塞原因。
 
-完成标准：编译成功，取得 workflow_ref 后进入步骤 9。
+完成标准：取得 Builder 的 next_action 后进入步骤 9；已有结果直接复用。
 
 ### 9. 执行工作流
 
 **播报**（执行前，必须预告）：本轮用哪几组词、大概几分钟、期间不会有新消息。例："第 2 轮开始，这轮用「AI Agent + LangGraph」和「AI Agent + RAG」两组词检索，预计 3–5 分钟，期间不会有新消息。"
 
-执行 browser_run_workflow 读取两路卡片。对照台账挑出未看的人，按 `references/seen-and-expand.md` 采集所选详情；collect 自动核对并复用列表，页面恢复边界见 `references/search-plan.md`「常规详情名单」。每轮主路径最多采满上限（默认 5 人）、第二路最多 3 人，两路不重复。
+按 Builder 的 next_action 执行或复用两路卡片结果。对照台账挑出未看的人，按 `references/seen-and-expand.md` 采集所选详情；三条采集路径和中断续跑统一按 `references/recovery.md` 对账、选择下一步、执行。每轮主路径最多采满上限（默认 5 人）、第二路最多 3 人，两路不重复。
 
 **补搜**——search 返回后先数主路径**可采**人数：卡片硬筛为 matched/unknown、且不在已看台账里的人数。查询带了公司词、该公司不是硬条件、可采人数小于主路径上限 → 本轮必须补搜一次：
 
 1. 先采集这批人（0 人则跳过第一次采集），公司池标「人不够」。
 2. 按 `references/search-plan.md` 的补搜计划写文件、编译、再搜一次（只走主路径，去掉该公司词）。
-3. 从补搜卡片采集差额（上限减去本轮主路径已采集数）。
+3. 从补搜卡片采集差额（上限减去对账中的主路径 occupied 数）。
 4. 每轮最多一次。无公司词、或公司是硬条件时不补搜，有谁采谁。
 
-第二路照常采集；补搜只重跑主路径。两批详情收齐后再进入步骤 10–11，本轮只评一次。补搜不计入轮次，也不代替扩张。
+第二路照常采集；补搜只重跑主路径。两批采集对账完成后进入步骤 10–11，合并评分待评者。补搜不计入轮次，也不代替扩张。
 
 **播报**（补搜前）："带这个公司词搜到的可选人只有 N 位，我先打开这几份，再去掉公司词补找。"
 
-完成标准：本轮搜索与第一次采集已执行（可采为 0 且将补搜时可省第一次采集）；若触发补搜，补搜与第二次采集已执行。
+完成标准：原搜索及已触发补搜均有卡片结果；所选候选人已对账为完成、失败或效果不明，仍可执行的剩余名单已处理。
 
 ### 10. 读取结果
 
-检查 status、error_code、summary.metrics、summary.sections 和业务 summary。对每次采集的 success 或 partial 结果，运行 `scripts/score_inputs.py --task-id TASK_ID --result-ref RESULT_REF --task-work-dir "/ABSOLUTE/TASK_WORK_DIR"`（脚本路径以当前 Skill 目录为根）。脚本写出单人详情、只返回索引。主 Agent 用索引追加台账（见 `references/seen-and-expand.md`），把待评人的 `profile_path` 交给步骤 11。partial 时读 search 的 unsupported_filters。站内筛选降级只是召回范围没缩小；有 `hard_filter_fallback` 的条件由卡片规则硬筛，详情证据交评分子 Agent 核实。年龄、性别、活跃度、跳槽频率没有本地硬筛回退，页面操作失败时必须报告未验证，不能承诺候选人已满足。失败原因读 failures 的错误字段。
+检查 status、error_code、summary.metrics、summary.sections 和业务 summary。按 `references/recovery.md` 汇总本轮已有详情结果（含失败执行中已保存者），运行 `scripts/score_inputs.py --task-id TASK_ID --result-ref RESULT_REF --task-work-dir "/ABSOLUTE/TASK_WORK_DIR"`（脚本路径以当前 Skill 目录为根）。脚本写出单人详情、只返回索引。主 Agent 用索引追加台账（见 `references/seen-and-expand.md`），把待评人的 `profile_path` 交给步骤 11。partial 时读 search 的 unsupported_filters。站内筛选降级只是召回范围没缩小；有 `hard_filter_fallback` 的条件由卡片规则硬筛，详情证据交评分子 Agent 核实。年龄、性别、活跃度、跳槽频率没有本地硬筛回退，页面操作失败时必须报告未验证，不能承诺候选人已满足。失败原因读 failures 的错误字段。
 
-完成标准：本轮全部详情与失败记录已进入索引和台账；若有补搜，两批都已入账；partial 时已查明筛选降级原因。
+完成标准：本轮保存的详情与失败记录已进入索引，有打开证据者已入账，效果不明的缺口已记录；若有补搜，两批都已汇总；partial 时已查明筛选降级原因。
 
 **播报**：用了哪些词、各看到多少人、打开了几份简历、多少人条件对得上、几位之前看过所以跳过；补搜过就把两次的人数说在一段里。页面上某个条件没筛上时说清是哪一个；有硬筛回退的用简历再看，无回退的说明未验证。
 
 ### 11. 隔离评分
 
-对索引里有 `profile_path`、且本需求版本尚未评分的人评分，跨轮按 candidate_ref 去重。派一个评分子 Agent：把 `references/scoring.md` 路径、当前需求路径、本轮待评人 `profile_path`、本轮 N（重评时另附原评分记录和调整原因）传给它，任务说明只写「按该文件一次返回规定 JSON」。消费 `{candidate_scores, labels, company_hits, calibration_samples}`：分数写入 decision_basis，`labels` 用于扩张门和播报，`company_hits` 按步骤 3.5 并入公司池。沿用旧分时逐字复制已有 `candidate_scores`；需求变更或明确算错才重评并写 correction_reason。
+对索引里有 `profile_path`、且本需求版本尚未评分的人评分，跨轮按 candidate_ref 去重。派一个评分子 Agent：把 `references/scoring.md` 路径、当前需求路径、本轮待评人 `profile_path`、本轮 N（重评时另附原评分记录和调整原因）传给它，任务说明只写「按该文件一次返回规定 JSON」。收到返回先按 `references/recovery.md` 保存评分，再消费 `{candidate_scores, labels, company_hits, calibration_samples}`：分数写入 decision_basis，`labels` 用于扩张门和播报，`company_hits` 按步骤 3.5 并入公司池。沿用旧分时逐字复制已有 `candidate_scores`；需求变更或明确算错才重评并写 correction_reason。
 
 完成标准：本轮每位已采集详情的候选人都有评分记录；Top 10 与目标公司池已更新。
 
@@ -307,6 +307,5 @@ report.json 里要带 `seen_ledger_path`（本次台账的绝对路径）和 `no
 - 主 Agent 只消费卡片、索引、各子 Agent 返回值和 Builder 回执。可推荐、强匹配以 `labels` 和之后的 Builder 回执为准。`target-company-research.md` / `scoring.md` / `prf.md` / `reflect.md` / `market-research.md` 与详情文件只把路径交给对应子 Agent。
 - 年龄、性别仅可作为用户明确确认的站内筛选（`site_filters.age_range`、`site_filters.gender`），不得写入 `hard_filters`，也不参与评分、排序、硬冲突判定或市场洞察；页面操作失败时按 `unsupported_filters` 报告未验证。学校名称、民族、婚育仍不写入检索、站内筛选、评分、排序、硬冲突判定或市场洞察，用户提出时说明不予执行。
 - 零结果是有效的查询结果，进入正常的评分、反思和 Controller 决策；工具错误、超时或页面失败是失败，不记作零结果。
-- 未被容错块捕获的 TARGET_NOT_FOUND、WAIT_TIMEOUT、PAGE_STATE_NOT_RECOGNIZED，或工作流引用失效，都结束当前轮；只有调整搜索计划、更新 Skill 页面规则或恢复明确的人工作业状态后，才重新编译执行。
-- 有外部副作用的动作出现网络错误、超时或效果未知时，先读取运行结果**对账**：已有明确观察则消费结果；证明未产生效果后才允许在下一轮重新编译执行；仍无法确定时暂停并说明。
+- 工具错误、超时、页面变化或引用失效时，按 `references/recovery.md` 对账并选择下一步；候选人的失败与效果不明记录为缺口，其余工作继续。登录或环境故障阻塞所有可执行步骤时，说明具体阻塞。
 - 只有前置或搜索工作流明确返回 login_required 时才判断为未登录；其他页面错误按各自的错误码处理。

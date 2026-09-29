@@ -21,18 +21,27 @@ function context(values, item = {}) {
     limits: {max_loop_iterations: 30}}, deadline_at: '2100-01-01T00:00:00Z'});
 }
 (async () => {
-  // Mutate one observation at a time: only the identical state may skip restoration.
-  for (const [field, value] of [['same', null], ['query', 'other'], ['page', '2'],
-                                ['filters', ['3天内活跃']], ['url', 'https://h.liepin.com/other']]) {
+  let opened = 0, submitted = 0;
+  const states = [
+    ['same', null, true], ['query', 'other', false], ['page', '2', false],
+    ['filters', ['3天内活跃'], false], ['filters', [...input.snapshot.filters].reverse(), true],
+    ['url', input.snapshot.url + '?tracking=irrelevant#session', true],
+    ['url', 'https://h.liepin.com/other', false]
+  ];
+  for (const [field, value, ready] of states) {
     const state = structuredClone(input.snapshot);
     if (field !== 'same') state[field] = value;
+    state.route = state.url.split(/[?#]/)[0];
     const c = context({search: {list_state: state}});
-    const step = {...input.gate,
-      then: [{id: 'reuse', op: 'data.set', path: 'outcome', value: 'reuse'}],
-      else: [{id: 'restore', op: 'data.set', path: 'outcome', value: 'restore'}]};
-    await executeProgram([step], c);
-    assert.equal(c.values.outcome, field === 'same' ? 'reuse' : 'restore');
+    await executeProgram([input.gate], c);
+    assert.equal(c.values.search.collection_check.status, ready ? 'ready' : 'needs_restore');
+    assert.equal(c.values.search.cards.length, ready ? 1 : 0);
+    // Only cards yielded by the actual generated gate enter tabs.foreach.
+    opened += c.values.search.cards.length;
+    assert(!JSON.stringify(input.gate).includes('page.fill'));
   }
+  assert.equal(opened, 3);
+  assert.equal(submitted, 0);
   for (const rows of [[], [{candidate_ref: 'liepin:other0001', row_index: 0}],
     [{candidate_ref: 'liepin:wanted001', row_index: 7}],
     [{candidate_ref: 'liepin:wanted001', row_index: 2}, {candidate_ref: 'liepin:wanted001', row_index: 7}]]) {
@@ -44,5 +53,5 @@ function context(values, item = {}) {
     assert.equal(failed, rows.filter(r => r.candidate_ref === 'liepin:wanted001').length !== 1);
     if (!failed) assert.equal(resolveTemplate(input.target, c).within.index, 7);
   }
-  console.log('Domi interpreter: 5 page-state cases + 4 candidate-identity cases passed');
+  console.log('Domi interpreter: 7 page-state cases + 4 candidate-identity cases passed; 0 implicit search submissions');
 })().catch(e => {console.error(e);process.exitCode = 1;});

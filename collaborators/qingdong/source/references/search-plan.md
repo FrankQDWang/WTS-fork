@@ -45,7 +45,7 @@
 
 `decision_basis` 的字段与示例以 Builder 校验为准：`requirement_version`、`completed_iteration`、`candidate_scores`、`prf_decision`、`next_action`。同一需求版本的 `hard_filters` 与 `semantic_criteria` 必须保持一致；只换关键词不能同步改写条件。每条候选人评分保留 candidate_ref、真实 detail_ref、详情分区、首次评分轮次、三维原始分、matches、must_unknown、unknown 和证据说明。纠错或需求版本变化时写 correction_reason，但不改首次评分轮次，也不删除历史候选人。
 
-Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`。下一轮及 settle 从已完成工作流恢复真实执行计划；旧 iteration 文件即使被修改，也不作为绕过一致性校验的依据。
+Builder 会把本轮输入计划写入受工作流摘要保护的 `input_plan`。下一轮及 settle 从已完成或已对账跳过的采集记录恢复真实执行计划；旧 iteration 文件即使被修改，也不作为绕过一致性校验的依据。
 
 ## 站内筛选字段
 
@@ -145,7 +145,7 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" refill --tas
 
 Builder 校验：本轮已有 search 卡片结果；可采人数大于 0 时先采集，已够额则拒绝补搜。`dropped_company` 必须逐字等于主路径中的完整公司词（按空格分词）；公司词属于 hard_filters.company 时拒绝。补搜只移除该公司词，其他关键词和全部硬条件不变，只走主路径、只出卡片，每轮最多一次。
 
-第二次采集路径：`<TASK_WORK_DIR>/wts/search-plans/iteration-N-refill-collect.json`，命令仍是 `collect --iteration N`。只填 `result_ref` 和 `primary`；`result_ref` 必须是这次补搜的卡片结果。名单长度不得超过「主路径上限 − 本轮主路径已采集数」。
+第二次采集路径：`<TASK_WORK_DIR>/wts/search-plans/iteration-N-refill-collect.json`，命令仍是 `collect --iteration N`。只填 `result_ref` 和 `primary`；`result_ref` 必须是这次补搜的卡片结果。新增名单不得超过「主路径上限 − 对账中的主路径 occupied 数」。
 
 ```
 python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" collect --task-id TASK_ID --iteration N --task-work-dir "/ABSOLUTE/TASK_WORK_DIR" --plan-file "/ABSOLUTE/TASK_WORK_DIR/wts/search-plans/iteration-N-refill-collect.json"
@@ -174,11 +174,9 @@ python "/ABSOLUTE/BUILTIN_SKILLS_DIR/wts/scripts/build_workflow.py" collect --ta
 }
 ```
 
-没有第二路时多写 `"secondary": []` 与省略同等。本轮存在的路径必须填写。主路径最多 5 人、第二路最多 3 人，且不超过本轮计划上限；只选相应卡片结果中 matched/unknown 的编号，两路不重复。Builder 从结果恢复原计划，拒绝越界名单。collect 返回 `details.primary/secondary` 和 `failures.primary/secondary`；评分的 detail_ref 引用这次结果。
+没有第二路时多写 `"secondary": []` 与省略同等。本轮存在的路径必须填写。主路径最多 5 人、第二路最多 3 人，且不超过本轮计划上限；只选相应卡片结果中 matched/unknown 的编号，两路不重复。Builder 从结果恢复原计划，拒绝越界名单。collect 返回 `details.primary/secondary` 和 `failures.primary/secondary`；评分的 detail_ref 保留各人真实结果引用。
 
-collect 比对 search 返回的 list_state（页面地址、关键词、已提交筛选标签和页码）：无分页控件时 page=null 也是有效快照；一致时直接采集，变化或旧结果无快照时才在搜索页恢复原查询与筛选。每次点击前按 candidate_ref 重新定位，缺失或不唯一记入 failures，不按旧位置点人、不换人补位。
-
-搜索页不可用且 collect 尚未打开任何详情时，恢复登录/页面后可用原命令追加 `--restore-search`，显式导航并恢复搜索。正常采集不加此参数；已部分采集或效果未知时先对账，不能整批重跑。
+采集与恢复统一见 `references/recovery.md`：默认接着当前列表做，差异返回后由 Agent 决定恢复；Builder 对账扣除已完成和效果不明者，累计校验预算。
 
 ## 扩张计划
 
@@ -194,14 +192,15 @@ N 是当前轮次，K 是本轮第几次扩张（1-3）。编译命令的 `workf
 | --- | --- | --- |
 | `requirement_version` | string | 与本轮 iteration-N.json 相同 |
 | `source_path` | string | primary / secondary / refill；填写实际来源路径，Builder 核对该路查询与筛选 |
-| `query` | string | 必填；必须逐字等于本轮已执行的 `primary_query`、`secondary_query` 或补搜后的主路径查询，扩张只重开同一页 |
-| `include_candidate_refs` | string[] | 必填，1-30 个、不重复；Agent 从该路 `candidates.<path>` 卡片里挑出要打开的人。Builder 编译为卡片谓词 `selected_for_expansion`：不在名单内即 reject；详情预算 = 名单长度 |
+| `query` | string | 必填；必须逐字等于本轮已执行的 `primary_query`、`secondary_query` 或补搜后的主路径查询，扩张沿用该卡片来源 |
+| `result_ref` | string | 推荐填写所选卡片的真实结果引用；旧计划省略时仅从本轮匹配来源的已完成卡片结果解析 |
+| `include_candidate_refs` | string[] | 必填，1-30 个、不重复；Agent 从该路 `candidates.<path>` 卡片里挑出要打开的人。Builder 编译为卡片谓词 `selected_for_expansion`：不在名单内即 reject；首次详情预算 = 名单长度，续跑仅编译剩余者并校验累计名额 |
 | `site_filters` | object | 照抄来源路径实际筛选；公司词在 query 中，site_filters 省略 company |
 | `hard_filters` | object | 照抄本轮计划；与已执行计划不一致即拒绝编译 |
 | `semantic_criteria` | object | 照抄本轮计划；与已执行计划不一致即拒绝编译 |
 | `action_delay_ms` | integer | 同搜索计划 |
 
-没有 `secondary_query`、`limits`、`decision_basis`。Builder 从 Workflow Store 找回本轮真实执行的计划做一致性校验，本轮没有已完成结果时拒绝编译。扩张工作流的 `iteration` 仍是 N，但带 `expansion=K` 标记，下一轮和 settle 找回本轮计划时会跳过它。
+没有 `secondary_query`、`limits`、`decision_basis`。Builder 从 Workflow Store 找回本轮真实执行的计划做一致性校验，本轮尚未完成采集对账时拒绝编译；卡片来源必须是已完成结果。扩张工作流的 `iteration` 仍是 N，但带 `expansion=K` 标记，下一轮和 settle 找回本轮计划时会跳过它。
 
 ```json
 {

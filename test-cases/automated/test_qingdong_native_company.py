@@ -12,6 +12,12 @@ sys.path.insert(0, str(BUILDER.parent))
 spec = importlib.util.spec_from_file_location('qingdong_native_builder', BUILDER)
 builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
+# Load the collaborator pacing implementation explicitly; baseline tests use a sibling module of the same name.
+pacing_spec = importlib.util.spec_from_file_location('qingdong_pacing', BUILDER.with_name('pacing.py'))
+pacing = importlib.util.module_from_spec(pacing_spec)
+pacing_spec.loader.exec_module(pacing)
+builder.pace_search_path = pacing.pace_search_path
+
 
 
 class NativeCompanyTests(unittest.TestCase):
@@ -57,7 +63,7 @@ class NativeCompanyTests(unittest.TestCase):
         self.assertEqual(w['input_plan']['site_filters'], {'activity_recency': 'within_7_days'})
         self.assertEqual(w['input_plan']['hard_filters'], self.plan['hard_filters'])
         self.assertNotIn('fill-company-input', json.dumps(w))
-        self.assertIn('同一轮', self.call('refill', 'iteration-1-refill.json', ok=False)['error'])
+        self.assertIn('状态未确认', self.call('refill', 'iteration-1-refill.json', ok=False)['error'])
 
     def test_native_refill_rejects_wrong_company_and_single_hard_company(self):
         self.native_search(['阿里巴巴'])
@@ -88,7 +94,7 @@ class NativeCompanyTests(unittest.TestCase):
         import argparse
         self.native_search()
         refill = self.call('refill', 'iteration-1-refill.json')
-        self.result(refill, {'candidates': {'primary': []}})
+        self.result(refill, {'candidates': {'primary': [{'candidate_ref': 'liepin:new000001', 'card_hard_filter_status': 'unknown'}]}})
         plan = {k: copy.deepcopy(self.card_workflow['input_plan'][k])
                 for k in ('requirement_version', 'site_filters', 'hard_filters', 'semantic_criteria')}
         plan.update(query='Agent RAG', include_candidate_refs=['liepin:new000001'])
@@ -102,7 +108,7 @@ class NativeCompanyTests(unittest.TestCase):
                 builder.build_expand(args, builder.load_assets())
             plan['source_path'] = 'refill'
             self.write('iteration-1-expand-1.json', plan)
-            with self.assertRaisesRegex(ValueError, '实际搜索一致'):
+            with self.assertRaisesRegex(ValueError, '卡片结果一致'):
                 builder.build_expand(args, builder.load_assets())
             plan['site_filters'].pop('company')
             self.write('iteration-1-expand-1.json', plan)

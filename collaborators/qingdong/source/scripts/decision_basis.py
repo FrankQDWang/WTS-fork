@@ -98,17 +98,20 @@ def decision_receipt(plan: dict, *, iteration: int, task_id: str, store_root: Pa
     def profile(row: dict) -> dict:
         ref = text(row.get("detail_ref"), "detail_ref", 250)
         match = re.fullmatch(r"result://([A-Za-z0-9._-]{1,100})/([a-f0-9]{64})", ref)
-        if not match or match[1] != task_id:
-            raise ValueError("detail_ref 必须引用当前任务的真实 Result Store 结果")
+        if not match:
+            raise ValueError("detail_ref 必须引用当前会话的真实 Result Store 结果")
         if ref not in results:
             root = (store_root / "result-store").resolve()
-            path = (root / task_id / f"{match[2]}.json").resolve()
+            path = (root / match[1] / f"{match[2]}.json").resolve()
             if not path.is_relative_to(root) or not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
                 raise ValueError("detail_ref 对应结果不存在、越界或超过 16 MiB")
             raw = path.read_bytes()
             if hashlib.sha256(raw).hexdigest() != match[2]:
                 raise ValueError("detail_ref 结果摘要不匹配，不能依据已变化的数据复用评分")
             results[ref] = json.loads(raw)
+            if match[1] != task_id:
+                from recovery import source_workflow
+                source_workflow(store_root, ref)  # Foreign task must belong to this session store.
         section = row.get("detail_section")
         if section not in DETAIL_SECTIONS:
             raise ValueError("detail_section 必须是 " + " / ".join(sorted(DETAIL_SECTIONS)))
